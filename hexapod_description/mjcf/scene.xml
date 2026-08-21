@@ -1,0 +1,23 @@
+<mujoco model="hexapod_scene">
+  <compiler angle="radian"/>
+
+  <!-- 1. 场景全局属性与画质设置 -->
+  <option timestep="0.001" gravity="0 0 -9.81"/>
+
+  <!-- 2. 场景美化资源：棋盘格地面与天空纹理 -->
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1="0.4 0.6 0.8" rgb2="0 0 0" width="800" height="800"/>
+    <texture name="grid_tex" type="2d" builtin="checker" width="512" height="512" rgb1="0.7 0.7 0.7" rgb2="0.5 0.5 0.5"/>
+    <material name="grid_mat" texture="grid_tex" texrepeat="10 10" reflectance="0.2"/>
+  </asset>
+
+  <!-- 3. 环境主体：平行光 + 无限大平地 -->
+  <worldbody>
+    <light directional="true" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" pos="0 0 5" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="20 20 0.1" pos="0 0 0" material="grid_mat" friction="1.0 0.005 0.0001" contype="1" conaffinity="1" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2"/>
+  </worldbody>
+
+  <!-- 4. 关键：引入机器人 XML 模型 -->
+  <include file="hexapod_model.xml"/>
+
+</mujoco>
