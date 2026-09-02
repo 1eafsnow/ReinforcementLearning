@@ -14,7 +14,7 @@
   <!-- 3. 环境主体：平行光 + 无限大平地 -->
   <worldbody>
     <light directional="true" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" pos="0 0 5" dir="0 0 -1"/>
-    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" material="grid_mat" friction="1.0 0.005 0.0001" condim="3" contype="1" conaffinity="1"/>
+    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" material="grid_mat" friction="1.0 0.005 0.0001" condim="3" contype="1" conaffinity="1" group="0"/>
   </worldbody>
 
   <!-- 4. 关键：引入机器人 XML 模型 -->
