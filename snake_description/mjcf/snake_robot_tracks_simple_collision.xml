@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mujoco model="snake_robot">
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 -9.81" solver="Newton" iterations="50" integrator="implicitfast" cone="elliptic"/>
+  <default>
+    <default class="track_contact">
+      <joint type="hinge" axis="0 1 0" limited="false" damping="0.05" armature="0.005"/>
+      <geom type="capsule" quat="0.70710678 -0.70710678 0 0" rgba="0 0 0 0" friction="1 0.005 0.0001" condim="3" contype="1" conaffinity="1" mass="0.05"/>
+    </default>
+  </default>
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="../meshes/base_link.STL"/>
+    <mesh name="front_link" content_type="model/stl" file="../meshes/front_link.STL"/>
+    <mesh name="front_track" content_type="model/stl" file="../meshes/front_track.STL"/>
+    <mesh name="back_link" content_type="model/stl" file="../meshes/back_link.STL"/>
+    <mesh name="back_track" content_type="model/stl" file="../meshes/back_track.STL"/>
+  </asset>
+  <worldbody>
+    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" rgba="0.22 0.25 0.28 1" friction="1.0 0.005 0.0001" condim="3" contype="1" conaffinity="1"/>
+    <body name="base_link" pos="0 0 0.5" quat="1 0 0 0">
+      <freejoint name="floating_base"/>
+      <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="base_link" contype="0" conaffinity="0" group="2"/>
+      <geom name="base_link_collision"
+            type="box"
+            pos="0.1197 -0.0003 -0.0389"
+            size="0.250 0.104 0.076"
+            rgba="0 1 0 0"
+            density="0"
+            friction="0.30 0.005 0.0001"
+            condim="3"
+            contype="1"
+            conaffinity="1"
+            group="3"/>
+      <body name="front_link" pos="-0.0765 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="-0.10865 0.017803 -0.076529" quat="0.497061 0.497362 0.502973 0.502573" mass="0.63341" diaginertia="0.00101974 0.00090037 0.000736405"/>
+        <joint name="front_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_link" contype="0" conaffinity="0" group="2"/>
+        <geom name="front_link_collision"
+              type="box"
+              pos="-0.0902 0.0233 -0.0745"
+              size="0.116 0.058 0.073"
+              rgba="0 1 0 0"
+              density="0"
+              friction="0.30 0.005 0.0001"
+              condim="3"
+              contype="1"
+              conaffinity="1"
+              group="3"/>
+        <body name="front_track" pos="-0.12694 -0.047652 -0.0745" quat="0.707105 -0.707108 -0.000423734 0.000423733">
+          <inertial pos="-0.33739 -0.00064039 0.05406" quat="0.49988 0.500306 0.499664 0.500149" mass="3.1288" diaginertia="0.025033 0.022341 0.0080057"/>
+          <joint name="front_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_track" contype="0" conaffinity="0" group="2"/>
+          <geom name="front_track_collision"
+                type="box"
+                pos="-0.2881 -0.0081 0.0604"
+                size="0.300 0.078 0.078"
+                rgba="0 1 0 0"
+                density="0"
+                friction="0.30 0.005 0.0001"
+                condim="3"
+                contype="1"
+                conaffinity="1"
+                group="3"/>
+          <body name="front_track_contact1" pos="-0.5 -0.008 0.025">
+            <joint name="front_track_drive_joint" class="track_contact"/>
+            <geom name="front_track_contact1_geom" class="track_contact" size="0.055 0.015"/>
+          </body>
+          <body name="front_track_contact2" pos="-0.3 -0.008 0.025">
+            <joint name="front_track_roller2_joint" class="track_contact"/>
+            <geom name="front_track_contact2_geom" class="track_contact" size="0.055 0.015"/>
+          </body>
+          <body name="front_track_contact3" pos="-0.1 -0.008 0.025">
+            <joint name="front_track_roller3_joint" class="track_contact"/>
+            <geom name="front_track_contact3_geom" class="track_contact" size="0.055 0.015"/>
+          </body>
+        </body>
+      </body>
+      <body name="back_link" pos="0.3165 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="0.10621 0.029044 -0.076537" quat="0.47619 0.476017 0.522731 0.522879" mass="0.63341" diaginertia="0.00101967 0.00090044 0.000736344"/>
+        <joint name="back_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_link" contype="0" conaffinity="0" group="2"/>
+        <geom name="back_link_collision"
+              type="box"
+              pos="0.0882 0.0365 -0.0745"
+              size="0.112 0.063 0.073"
+              rgba="0 1 0 0"
+              density="0"
+              friction="0.30 0.005 0.0001"
+              condim="3"
+              contype="1"
+              conaffinity="1"
+              group="3"/>
+        <body name="back_track" pos="0.13122 -0.034146 -0.0745" quat="0.706162 -0.706165 -0.0365165 0.0365164">
+          <inertial pos="0.32501 -0.084885 0.054393" quat="0.559637 0.559644 0.432211 0.432202" mass="2.8466" diaginertia="0.0243598 0.02133 0.00757138"/>
+          <joint name="back_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_track" contype="0" conaffinity="0" group="2"/>
+          <geom name="back_track_collision"
+                type="box"
+                pos="0.2857 -0.0852 0.0604"
+                size="0.295 0.112 0.078"
+                rgba="0 1 0 0"
+                density="0"
+                friction="0.30 0.005 0.0001"
+                condim="3"
+                contype="1"
+                conaffinity="1"
+                group="3"/>
+          <body name="back_track_contact1" pos="0.08 -0.085 0.025">
+            <joint name="back_track_drive_joint" class="track_contact"/>
+            <geom name="back_track_contact1_geom" class="track_contact" size="0.055 0.045"/>
+          </body>
+          <body name="back_track_contact2" pos="0.3 -0.085 0.025">
+            <joint name="back_track_roller2_joint" class="track_contact"/>
+            <geom name="back_track_contact2_geom" class="track_contact" size="0.055 0.045"/>
+          </body>
+          <body name="back_track_contact3" pos="0.52 -0.085 0.025">
+            <joint name="back_track_roller3_joint" class="track_contact"/>
+            <geom name="back_track_contact3_geom" class="track_contact" size="0.055 0.045"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <!-- Structural links use simple box collision geoms. Track-ground traction remains anisotropic through explicit plane-capsule contact pairs. -->
+  <contact>
+    <!-- Adjacent simplified collision boxes are excluded so joint interfaces
+         do not generate artificial self-contact when their boxes overlap slightly. -->
+    <exclude name="exclude_base_front_link" body1="base_link" body2="front_link"/>
+    <exclude name="exclude_front_link_track" body1="front_link" body2="front_track"/>
+    <exclude name="exclude_base_back_link" body1="base_link" body2="back_link"/>
+    <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
+    <pair name="front_track_ground_1" geom1="floor" geom2="front_track_contact1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_2" geom1="floor" geom2="front_track_contact2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_3" geom1="floor" geom2="front_track_contact3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_1" geom1="floor" geom2="back_track_contact1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_2" geom1="floor" geom2="back_track_contact2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_3" geom1="floor" geom2="back_track_contact3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+  </contact>
+  <equality>
+    <joint name="front_track_sync_2" joint1="front_track_roller2_joint" joint2="front_track_drive_joint" polycoef="0 1 0 0 0" solref="0.01 1"/>
+    <joint name="front_track_sync_3" joint1="front_track_roller3_joint" joint2="front_track_drive_joint" polycoef="0 1 0 0 0" solref="0.01 1"/>
+    <joint name="back_track_sync_2" joint1="back_track_roller2_joint" joint2="back_track_drive_joint" polycoef="0 1 0 0 0" solref="0.01 1"/>
+    <joint name="back_track_sync_3" joint1="back_track_roller3_joint" joint2="back_track_drive_joint" polycoef="0 1 0 0 0" solref="0.01 1"/>
+  </equality>
+  <actuator>
+    <motor name="f1_motor" joint="front_joint1" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="f2_motor" joint="front_joint2" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="b1_motor" joint="back_joint1" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="b2_motor" joint="back_joint2" ctrlrange="-36 36" ctrllimited="true"/>
+    <velocity name="front_track_motor" joint="front_track_drive_joint" kv="12" ctrllimited="true" ctrlrange="-15 15" forcelimited="true" forcerange="-40 40"/>
+    <velocity name="back_track_motor" joint="back_track_drive_joint" kv="12" ctrllimited="true" ctrlrange="-15 15" forcelimited="true" forcerange="-40 40"/>
+  </actuator>
+</mujoco>
