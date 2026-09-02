@@ -1,3 +1,4 @@
+import signal
 import threading
 import time
 import tkinter as tk
@@ -91,6 +92,7 @@ class SnakeMitController:
         self.reset_event = threading.Event()
         self.emergency_stop = False
         self.sim_thread = None
+        self.viewer = None
 
         mujoco.mj_resetData(self.model, self.data)
         mujoco.mj_forward(self.model, self.data)
@@ -109,18 +111,56 @@ class SnakeMitController:
             return
 
         self.stop_event.clear()
-        self.sim_thread = threading.Thread(target=self._simulation_loop, daemon=True)
+        self.sim_thread = threading.Thread(target=self._simulation_loop, name="mujoco-simulation", daemon=True)
         self.sim_thread.start()
 
     def stop(self):
+        self.request_stop()
+
+    def request_stop(self):
+        with self.lock:
+            self.emergency_stop = True
+            self.data.ctrl[:] = 0.0
+            self.data.qfrc_applied[:] = 0.0
+            self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
+
         self.stop_event.set()
 
+    def shutdown(self, timeout=3.0):
+        self.request_stop()
+
+        thread = self.sim_thread
+        if thread is None or thread is threading.current_thread():
+            return True
+
+        thread.join(timeout=timeout)
+        if not thread.is_alive():
+            return True
+
+        self.close_viewer()
+        thread.join(timeout=1.0)
+        return not thread.is_alive()
+
+    def close_viewer(self):
+        with self.lock:
+            viewer = self.viewer
+
+        if viewer is not None:
+            try:
+                viewer.close()
+            except Exception:
+                pass
+
     def reset(self):
-        self.reset_event.set()
+        if not self.stop_event.is_set():
+            self.reset_event.set()
 
     def set_emergency_stop(self, enabled):
         with self.lock:
             self.emergency_stop = enabled
+            if enabled:
+                self.data.ctrl[:] = 0.0
+                self.data.qfrc_applied[:] = 0.0
 
     def set_commands(self, commands):
         with self.lock:
@@ -145,9 +185,16 @@ class SnakeMitController:
         with self.lock:
             return [MotorState(q=state.q, dq=state.dq, tau=state.tau) for state in self.states]
 
+    def _zero_output(self):
+        self.data.ctrl[:] = 0.0
+        self.data.qfrc_applied[:] = 0.0
+
     def _simulation_loop(self):
         try:
             with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
+                with self.lock:
+                    self.viewer = viewer
+
                 while viewer.is_running() and not self.stop_event.is_set():
                     step_start = time.perf_counter()
 
@@ -171,9 +218,7 @@ class SnakeMitController:
                         ]
                         emergency_stop = self.emergency_stop
 
-                    self.data.ctrl[:] = 0.0
-                    self.data.qfrc_applied[:] = 0.0
-
+                    self._zero_output()
                     new_states = []
 
                     for i, command in enumerate(commands):
@@ -205,23 +250,32 @@ class SnakeMitController:
                     sleep_time = self.model.opt.timestep - elapsed
 
                     if sleep_time > 0.0:
-                        time.sleep(sleep_time)
+                        self.stop_event.wait(sleep_time)
         finally:
+            with self.lock:
+                self._zero_output()
+                self.emergency_stop = True
+                self.viewer = None
+                self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
+
             self.stop_event.set()
 
 
 class SnakeControlUi:
     UPDATE_PERIOD_MS = 50
 
-    def __init__(self, root, controller):
+    def __init__(self, root, controller, signal_stop_event):
         self.root = root
         self.controller = controller
+        self.signal_stop_event = signal_stop_event
         self.entries = []
         self.state_labels = []
         self.enable_vars = []
+        self.closing = False
 
         self.root.title("Snake Robot MIT Control")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.protocol("WM_DELETE_WINDOW", self._safe_exit)
+        self.root.bind("<Control-c>", lambda _event: self._safe_exit())
 
         self._build_ui()
         self.controller.start()
@@ -275,7 +329,6 @@ class SnakeControlUi:
                 row_entries.append(entry)
 
             self.entries.append(row_entries)
-
             labels = []
 
             for col in range(8, 11):
@@ -296,6 +349,9 @@ class SnakeControlUi:
         self.estop_button = ttk.Button(controls, text="Emergency Stop", command=self._toggle_estop)
         self.estop_button.grid(row=0, column=4, padx=6)
 
+        self.exit_button = ttk.Button(controls, text="Safe Exit", command=self._safe_exit)
+        self.exit_button.grid(row=0, column=5, padx=(18, 0))
+
         self.status_var = tk.StringVar(value=f"Model: {self.controller.model_path}")
         ttk.Label(main, textvariable=self.status_var).grid(
             row=len(MOTOR_CONFIGS) + 2,
@@ -307,7 +363,8 @@ class SnakeControlUi:
 
         tip = (
             "MIT: tau = Kp*(q_des-q) + Kd*(dq_des-dq) + tau_ff. "
-            "For track speed control, keep Kp=0 and set dq_des/Kd."
+            "For track speed control, keep Kp=0 and set dq_des/Kd. "
+            "Use Safe Exit to stop torque, close the viewer, and exit cleanly."
         )
         ttk.Label(main, text=tip).grid(
             row=len(MOTOR_CONFIGS) + 3,
@@ -348,6 +405,9 @@ class SnakeControlUi:
         return commands
 
     def _apply(self):
+        if self.closing:
+            return
+
         try:
             commands = self._read_commands_from_ui()
         except ValueError as exc:
@@ -358,6 +418,9 @@ class SnakeControlUi:
         self.status_var.set("MIT parameters applied.")
 
     def _hold_current(self):
+        if self.closing:
+            return
+
         states = self.controller.get_states()
 
         for i, state in enumerate(states):
@@ -372,6 +435,9 @@ class SnakeControlUi:
         self._apply()
 
     def _zero_targets(self):
+        if self.closing:
+            return
+
         for row_entries in self.entries:
             row_entries[0].delete(0, tk.END)
             row_entries[0].insert(0, "0")
@@ -383,6 +449,9 @@ class SnakeControlUi:
         self._apply()
 
     def _toggle_estop(self):
+        if self.closing:
+            return
+
         if self.estop_button.cget("text") == "Emergency Stop":
             self.controller.set_emergency_stop(True)
             self.estop_button.configure(text="Release Emergency Stop")
@@ -393,6 +462,10 @@ class SnakeControlUi:
             self.status_var.set("Emergency stop released.")
 
     def _refresh_state(self):
+        if self.signal_stop_event.is_set() and not self.closing:
+            self._safe_exit()
+            return
+
         states = self.controller.get_states()
 
         for labels, state in zip(self.state_labels, states):
@@ -400,19 +473,47 @@ class SnakeControlUi:
             labels[1].configure(text=f"{state.dq:.3f}")
             labels[2].configure(text=f"{state.tau:.3f}")
 
-        if not self.controller.stop_event.is_set():
+        if not self.closing and not self.controller.stop_event.is_set():
             self.root.after(self.UPDATE_PERIOD_MS, self._refresh_state)
 
-    def _on_close(self):
-        self.controller.stop()
-        self.root.destroy()
+    def _safe_exit(self):
+        if self.closing:
+            return
+
+        self.closing = True
+        self.status_var.set("Safe shutdown: zeroing torque and closing MuJoCo viewer...")
+        self.exit_button.configure(state=tk.DISABLED)
+        self.estop_button.configure(state=tk.DISABLED)
+        self.root.update_idletasks()
+
+        clean_shutdown = self.controller.shutdown(timeout=3.0)
+
+        if not clean_shutdown:
+            self.status_var.set("Viewer did not stop in time; forcing viewer close...")
+            self.root.update_idletasks()
+            self.controller.close_viewer()
+            time.sleep(0.1)
+
+        self.root.after(0, self.root.destroy)
 
 
 def main():
+    signal_stop_event = threading.Event()
+
+    def handle_signal(_signum, _frame):
+        signal_stop_event.set()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     controller = SnakeMitController()
     root = tk.Tk()
-    SnakeControlUi(root, controller)
-    root.mainloop()
+    SnakeControlUi(root, controller, signal_stop_event)
+
+    try:
+        root.mainloop()
+    finally:
+        controller.shutdown(timeout=1.0)
 
 
 if __name__ == "__main__":
