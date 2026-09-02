@@ -29,6 +29,14 @@ MOTOR_CONFIGS = [
     ("back_track_motor", "back_track_drive_joint", 0.0, 0.0, 0.0, 8.0, 0.0, 40.0),
 ]
 
+LIDAR_SITE_NAME = "lidar_site"
+LIDAR_ROWS = 4
+LIDAR_COLS = 120
+LIDAR_HFOV_DEG = 120.0
+LIDAR_VFOV_DEG = 90.0
+LIDAR_MAX_RANGE = 30.0
+LIDAR_SCAN_HZ = 10.0
+
 
 @dataclass
 class MitCommand:
@@ -66,9 +74,22 @@ class SnakeMitController:
             self.qpos_ids.append(int(self.model.jnt_qposadr[joint_id]))
             self.dof_ids.append(int(self.model.jnt_dofadr[joint_id]))
 
-        self.commands = [MitCommand(q_des=q, dq_des=dq, kp=kp, kd=kd, tau_ff=ff, tau_limit=limit)
-                         for _, _, q, dq, kp, kd, ff, limit in MOTOR_CONFIGS]
+        self.commands = [MitCommand(q_des=q, dq_des=dq, kp=kp, kd=kd, tau_ff=ff, tau_limit=limit) for _, _, q, dq, kp, kd, ff, limit in MOTOR_CONFIGS]
         self.states = [MotorState() for _ in MOTOR_CONFIGS]
+
+        self.lidar_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, LIDAR_SITE_NAME)
+        if self.lidar_site_id < 0:
+            raise RuntimeError(f"LiDAR site not found: {LIDAR_SITE_NAME}")
+        self.lidar_enabled = False
+        self.lidar_error = ""
+        self.lidar_scan = np.full((LIDAR_ROWS, LIDAR_COLS), LIDAR_MAX_RANGE, dtype=np.float32)
+        self.lidar_dirs_local = self._build_lidar_directions()
+        self.lidar_nray = LIDAR_ROWS * LIDAR_COLS
+        self.lidar_geomid = np.empty(self.lidar_nray, dtype=np.int32)
+        self.lidar_dist = np.empty(self.lidar_nray, dtype=np.float64)
+        self.lidar_geomgroup = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)
+        self.lidar_next_time = 0.0
+        self.lidar_has_normal_arg = self._mujoco_version_at_least(3, 8, 0)
 
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -89,6 +110,28 @@ class SnakeMitController:
         searched = "\n".join(str(path) for path in MODEL_CANDIDATES)
         raise FileNotFoundError(f"Could not find scene.xml. Searched:\n{searched}")
 
+    @staticmethod
+    def _mujoco_version_at_least(major, minor, patch):
+        numbers = []
+        for part in mujoco.__version__.split("."):
+            digits = "".join(ch for ch in part if ch.isdigit())
+            numbers.append(int(digits) if digits else 0)
+        while len(numbers) < 3:
+            numbers.append(0)
+        return tuple(numbers[:3]) >= (major, minor, patch)
+
+    @staticmethod
+    def _build_lidar_directions():
+        h_step = np.deg2rad(LIDAR_HFOV_DEG / LIDAR_COLS)
+        v_step = np.deg2rad(LIDAR_VFOV_DEG / LIDAR_ROWS)
+        azimuth = (np.arange(LIDAR_COLS, dtype=np.float64) - (LIDAR_COLS - 1) * 0.5) * h_step
+        elevation = (np.arange(LIDAR_ROWS, dtype=np.float64) - (LIDAR_ROWS - 1) * 0.5) * v_step
+        az, el = np.meshgrid(azimuth, elevation)
+        x = np.cos(el) * np.cos(az)
+        y = np.cos(el) * np.sin(az)
+        z = np.sin(el)
+        return np.ascontiguousarray(np.stack((x, y, z), axis=-1).reshape(-1, 3), dtype=np.float64)
+
     def start(self):
         if self.sim_thread is not None and self.sim_thread.is_alive():
             return
@@ -99,16 +142,16 @@ class SnakeMitController:
         self.sim_thread.start()
 
     def request_process_exit(self):
-        # Do not destroy GLFW/Tk windows here. On WSLg, a queued MIT-SHM frame can
-        # still reference the drawable while GLFW is tearing it down.
         with self.lock:
             self.emergency_stop = True
+            self.lidar_enabled = False
             self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
         self.process_exit_event.set()
 
     def request_graceful_stop(self):
         with self.lock:
             self.emergency_stop = True
+            self.lidar_enabled = False
         self.stop_event.set()
 
     def reset(self):
@@ -131,9 +174,41 @@ class SnakeMitController:
         with self.lock:
             return [MotorState(**vars(state)) for state in self.states]
 
+    def set_lidar_enabled(self, enabled):
+        with self.lock:
+            self.lidar_enabled = bool(enabled)
+            if enabled:
+                self.lidar_error = ""
+
+    def get_lidar_scan(self):
+        with self.lock:
+            return self.lidar_scan.copy()
+
+    def get_lidar_state(self):
+        with self.lock:
+            return self.lidar_enabled, self.lidar_scan.copy(), self.lidar_error
+
     def _zero_output(self):
         self.data.ctrl[:] = 0.0
         self.data.qfrc_applied[:] = 0.0
+
+    def _scan_lidar(self):
+        origin = self.data.site_xpos[self.lidar_site_id].copy()
+        rotation = self.data.site_xmat[self.lidar_site_id].reshape(3, 3)
+        dirs_world = np.ascontiguousarray(self.lidar_dirs_local @ rotation.T, dtype=np.float64).reshape(-1)
+
+        if self.lidar_has_normal_arg:
+            mujoco.mj_multiRay(self.model, self.data, origin, dirs_world, self.lidar_geomgroup, 1, -1, self.lidar_geomid, self.lidar_dist, None, self.lidar_nray, LIDAR_MAX_RANGE)
+        else:
+            mujoco.mj_multiRay(self.model, self.data, origin, dirs_world, self.lidar_geomgroup, 1, -1, self.lidar_geomid, self.lidar_dist, self.lidar_nray, LIDAR_MAX_RANGE)
+
+        ranges = self.lidar_dist.copy()
+        ranges[ranges < 0.0] = LIDAR_MAX_RANGE
+        np.clip(ranges, 0.0, LIDAR_MAX_RANGE, out=ranges)
+        scan = ranges.reshape(LIDAR_ROWS, LIDAR_COLS).astype(np.float32)
+        with self.lock:
+            self.lidar_scan = scan
+            self.lidar_error = ""
 
     def _simulation_loop(self):
         try:
@@ -147,11 +222,13 @@ class SnakeMitController:
                     if self.reset_event.is_set():
                         mujoco.mj_resetData(self.model, self.data)
                         mujoco.mj_forward(self.model, self.data)
+                        self.lidar_next_time = 0.0
                         self.reset_event.clear()
 
                     with self.lock:
                         commands = [MitCommand(**vars(cmd)) for cmd in self.commands]
                         emergency_stop = self.emergency_stop
+                        lidar_enabled = self.lidar_enabled
 
                     self._zero_output()
                     new_states = []
@@ -159,27 +236,31 @@ class SnakeMitController:
                     for i, command in enumerate(commands):
                         q = float(self.data.qpos[self.qpos_ids[i]])
                         dq = float(self.data.qvel[self.dof_ids[i]])
-
                         if emergency_stop or not command.enabled:
                             tau = 0.0
                         else:
                             tau = command.kp * (command.q_des - q) + command.kd * (command.dq_des - dq) + command.tau_ff
                             tau_limit = max(0.0, command.tau_limit)
                             tau = float(np.clip(tau, -tau_limit, tau_limit))
-
                         self.data.qfrc_applied[self.dof_ids[i]] = tau
                         new_states.append(MotorState(q=q, dq=dq, tau=tau))
 
                     with self.lock:
                         self.states = new_states
 
-                    # Safe Exit waits for this flag. It is set only from the simulation
-                    # thread after ctrl/qfrc_applied have really been cleared, so Tk never
-                    # writes MjData concurrently with mj_step().
                     if self.process_exit_event.is_set():
                         self.process_exit_ready.set()
 
                     mujoco.mj_step(self.model, self.data)
+
+                    if lidar_enabled and self.data.time >= self.lidar_next_time:
+                        try:
+                            self._scan_lidar()
+                        except Exception as exc:
+                            with self.lock:
+                                self.lidar_error = str(exc)
+                            print(f"LiDAR scan error: {exc}")
+                        self.lidar_next_time = self.data.time + 1.0 / LIDAR_SCAN_HZ
 
                     if self.stop_event.is_set():
                         break
@@ -194,11 +275,10 @@ class SnakeMitController:
                     if sleep_time > 0.0:
                         self.stop_event.wait(sleep_time)
         finally:
-            # Safe Exit normally never reaches this teardown because os._exit() terminates
-            # the process first. This path remains for a manually closed viewer/error.
             self._zero_output()
             with self.lock:
                 self.emergency_stop = True
+                self.lidar_enabled = False
                 self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
             self.process_exit_ready.set()
             self.stop_event.set()
@@ -232,8 +312,7 @@ class SnakeControlUi:
         main = ttk.Frame(self.root, padding=10)
         main.grid(row=0, column=0, sticky="nsew")
 
-        headers = ["Motor", "Enable", "q_des [rad]", "dq_des [rad/s]", "Kp", "Kd", "tau_ff [Nm]",
-                   "tau_limit [Nm]", "q", "dq", "tau"]
+        headers = ["Motor", "Enable", "q_des [rad]", "dq_des [rad/s]", "Kp", "Kd", "tau_ff [Nm]", "tau_limit [Nm]", "q", "dq", "tau"]
         for col, text in enumerate(headers):
             ttk.Label(main, text=text).grid(row=0, column=col, padx=4, pady=4)
 
@@ -245,8 +324,7 @@ class SnakeControlUi:
             ttk.Checkbutton(main, variable=enable_var).grid(row=row, column=1, padx=4, pady=3)
 
             row_entries = []
-            for offset, value in enumerate([command.q_des, command.dq_des, command.kp, command.kd,
-                                            command.tau_ff, command.tau_limit]):
+            for offset, value in enumerate([command.q_des, command.dq_des, command.kp, command.kd, command.tau_ff, command.tau_limit]):
                 entry = ttk.Entry(main, width=10)
                 entry.insert(0, f"{value:g}")
                 entry.grid(row=row, column=2 + offset, padx=3, pady=3)
@@ -270,14 +348,21 @@ class SnakeControlUi:
         self.estop_button = ttk.Button(controls, text="Emergency Stop", command=self._toggle_estop)
         self.estop_button.grid(row=0, column=4, padx=6)
 
+        self.lidar_var = tk.BooleanVar(value=False)
+        self.lidar_toggle = ttk.Checkbutton(controls, text="LiDAR", variable=self.lidar_var, command=self._toggle_lidar)
+        self.lidar_toggle.grid(row=0, column=5, padx=(18, 6))
+
         self.exit_button = ttk.Button(controls, text="Safe Exit", command=self._safe_exit)
-        self.exit_button.grid(row=0, column=5, padx=(18, 0))
+        self.exit_button.grid(row=0, column=6, padx=(18, 0))
+
+        self.lidar_status_var = tk.StringVar(value="LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
+        ttk.Label(main, textvariable=self.lidar_status_var).grid(row=len(MOTOR_CONFIGS) + 2, column=0, columnspan=11, sticky="w", pady=(10, 0))
 
         self.status_var = tk.StringVar(value=f"Model: {self.controller.model_path}")
-        ttk.Label(main, textvariable=self.status_var).grid(row=len(MOTOR_CONFIGS) + 2, column=0, columnspan=11, sticky="w", pady=(10, 0))
+        ttk.Label(main, textvariable=self.status_var).grid(row=len(MOTOR_CONFIGS) + 3, column=0, columnspan=11, sticky="w", pady=(4, 0))
 
         tip = "MIT: tau = Kp*(q_des-q) + Kd*(dq_des-dq) + tau_ff. For track speed control, keep Kp=0 and set dq_des/Kd."
-        ttk.Label(main, text=tip).grid(row=len(MOTOR_CONFIGS) + 3, column=0, columnspan=11, sticky="w", pady=(4, 0))
+        ttk.Label(main, text=tip).grid(row=len(MOTOR_CONFIGS) + 4, column=0, columnspan=11, sticky="w", pady=(4, 0))
 
     def _read_commands_from_ui(self):
         commands = []
@@ -327,6 +412,13 @@ class SnakeControlUi:
         self.estop_button.configure(text="Release Emergency Stop" if active else "Emergency Stop")
         self.status_var.set("Emergency stop active." if active else "Emergency stop released.")
 
+    def _toggle_lidar(self):
+        if self.closing:
+            return
+        enabled = self.lidar_var.get()
+        self.controller.set_lidar_enabled(enabled)
+        self.status_var.set("LiDAR enabled." if enabled else "LiDAR disabled.")
+
     def _refresh_state(self):
         if self.signal_stop_event.is_set() and not self.closing:
             self._safe_exit()
@@ -336,6 +428,14 @@ class SnakeControlUi:
             labels[0].configure(text=f"{state.q:.3f}")
             labels[1].configure(text=f"{state.dq:.3f}")
             labels[2].configure(text=f"{state.tau:.3f}")
+
+        lidar_enabled, lidar_scan, lidar_error = self.controller.get_lidar_state()
+        if lidar_error:
+            self.lidar_status_var.set(f"LiDAR ERROR: {lidar_error}")
+        elif lidar_enabled:
+            self.lidar_status_var.set(f"LiDAR: ON | 4x120 | min {float(np.min(lidar_scan)):.2f} m | max 30 m | 10 Hz")
+        else:
+            self.lidar_status_var.set("LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
 
         if not self.closing:
             self.root.after(self.UPDATE_PERIOD_MS, self._refresh_state)
@@ -350,6 +450,7 @@ class SnakeControlUi:
 
         self.exit_button.configure(state=tk.DISABLED)
         self.estop_button.configure(state=tk.DISABLED)
+        self.lidar_toggle.configure(state=tk.DISABLED)
         self.status_var.set("Safe exit: requesting zero torque before process termination...")
         self.root.after(self.EXIT_POLL_MS, self._poll_exit_zero)
 
@@ -367,8 +468,6 @@ class SnakeControlUi:
 
     @staticmethod
     def _hard_process_exit():
-        # Deliberately bypass Tk/GLFW destructors. The OS/X server cleans both windows
-        # when the process disappears, avoiding WSLg's intermittent MIT-SHM BadDrawable.
         try:
             sys.stdout.flush()
             sys.stderr.flush()
@@ -392,8 +491,6 @@ def main():
     try:
         root.mainloop()
     finally:
-        # If mainloop exits unexpectedly, avoid entering GLFW teardown from another
-        # path. This control utility owns no persistent files that require cleanup.
         controller.request_process_exit()
         time.sleep(0.05)
         os._exit(0)
