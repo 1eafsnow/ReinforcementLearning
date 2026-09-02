@@ -1,0 +1,44 @@
+<mujoco model="snake_robot">
+  <compiler angle="radian"/>
+
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/base_link.STL"/>
+    <mesh name="front_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/front_link.STL"/>
+    <mesh name="front_track" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/front_track.STL"/>
+    <mesh name="back_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/back_link.STL"/>
+    <mesh name="back_track" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/back_track.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link" pos="0 0 0.5" quat="1 0 0 0">
+      <freejoint name="floating_base" />
+      <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="base_link"/>
+      <body name="front_link" pos="-0.0765 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="-0.10865 0.017803 -0.076529" quat="0.497061 0.497362 0.502973 0.502573" mass="0.63341" diaginertia="0.00101974 0.00090037 0.000736405"/>
+        <joint name="front_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100"/>
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_link"/>
+        <body name="front_track" pos="-0.12694 -0.047652 -0.0745" quat="0.707105 -0.707108 -0.000423734 0.000423733">
+          <inertial pos="-0.33739 -0.00064039 0.05406" quat="0.49988 0.500306 0.499664 0.500149" mass="3.1288" diaginertia="0.025033 0.022341 0.0080057"/>
+          <joint name="front_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_track"/>
+        </body>
+      </body>
+      <body name="back_link" pos="0.3165 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="0.10621 0.029044 -0.076537" quat="0.47619 0.476017 0.522731 0.522879" mass="0.63341" diaginertia="0.00101967 0.00090044 0.000736344"/>
+        <joint name="back_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100"/>
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_link"/>
+        <body name="back_track" pos="0.13122 -0.034146 -0.0745" quat="0.706162 -0.706165 -0.0365165 0.0365164">
+          <inertial pos="0.32501 -0.084885 0.054393" quat="0.559637 0.559644 0.432211 0.432202" mass="2.8466" diaginertia="0.0243598 0.02133 0.00757138"/>
+          <joint name="back_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_track"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="f1_motor" joint="front_joint1" ctrlrange="-36 36" ctrllimited="true" />
+    <motor name="f2_motor" joint="front_joint2" ctrlrange="-36 36" ctrllimited="true" />
+    <motor name="b1_motor" joint="back_joint1" ctrlrange="-36 36" ctrllimited="true" />
+    <motor name="b2_motor" joint="back_joint2" ctrlrange="-36 36" ctrllimited="true" />
+  </actuator>
+</mujoco>

@@ -1,0 +1,267 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="Golem">
+  <compiler angle="radian" meshdir="../meshes" autolimits="false" />
+  <option timestep="0.001" integrator="Euler" gravity="0 0 -9.81" />
+  <size njmax="1000" nconmax="1000" />
+  <asset>
+    <material name="gray" rgba="0.7 0.7 0.7 1" />
+    <mesh name="body" file="body.stl" scale="0.001 0.001 0.001" />
+    <mesh name="coxa" file="coxa.stl" scale="0.001 0.001 0.001" />
+    <mesh name="femur" file="femur.stl" scale="0.001 0.001 0.001" />
+    <mesh name="tarsus" file="tarsus.stl" scale="0.001 0.001 0.001" />
+    <mesh name="tibia" file="tibia.stl" scale="0.001 0.001 0.001" />
+  </asset>
+  <worldbody>
+    <body name="base_link" pos="0 0 0.15" quat="1 0 0 0">
+      <freejoint name="floating_base" />
+      <body name="body_link" pos="0 0 0.064" quat="1 0 0 0">
+        <inertial mass="1.20" pos="0 0 0" diaginertia="0.005 0.015 0.018" />
+        <geom type="mesh" mesh="body" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+        <geom type="mesh" mesh="body" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+        <body name="camera_rgb_optical_frame" pos="0.15 0.0255 0.034" quat="0.5 -0.5 0.5 -0.5">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <camera name="camera_rgb" pos="0 0 0" fovy="60" xyaxes="1 0 0 0 -1 0" />
+        </body>
+        <body name="camera_depth_optical_frame" pos="0.15 -0.0225 0.034" quat="0.5 -0.5 0.5 -0.5">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <camera name="camera_depth" pos="0 0 0" fovy="60" xyaxes="1 0 0 0 -1 0" />
+        </body>
+        <body name="imu_link" pos="0 0 0.034" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <site name="imu_site" pos="0 0 0" size="0.005" type="sphere" rgba="0.8 0.2 0.2 1" />
+        </body>
+        <body name="pan_link" pos="0.1 0 0.034" quat="1 0 0 0">
+          <inertial mass="0.03" pos="0 0 0" diaginertia="2e-05 2e-05 2e-05" />
+        </body>
+        <body name="leg_center_RR" pos="-0.1778 -0.0825 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_RR" pos="0 0 0" quat="0.382683432365 0 0 -0.923879532511">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_RR" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_RR" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_RR" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_RR" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_RR" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_RR" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_RR" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_RR" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_RR_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_RR_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="leg_center_RM" pos="0 -0.13335 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_RM" pos="0 0 0" quat="0.707106781187 0 0 -0.707106781187">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_RM" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_RM" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_RM" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_RM" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_RM" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_RM" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_RM" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_RM" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_RM_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_RM_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="leg_center_RF" pos="0.1778 -0.0825 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_RF" pos="0 0 0" quat="0.923879532511 0 0 -0.382683432365">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_RF" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_RF" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_RF" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_RF" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_RF" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_RF" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_RF" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_RF" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_RF_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_RF_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="leg_center_LR" pos="-0.1778 0.0825 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_LR" pos="0 0 0" quat="0.382683432365 0 0 0.923879532511">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_LR" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_LR" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_LR" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_LR" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_LR" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_LR" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_LR" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_LR" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_LR_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_LR_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="leg_center_LM" pos="0 0.13335 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_LM" pos="0 0 0" quat="0.707106781187 0 0 0.707106781187">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_LM" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_LM" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_LM" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_LM" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_LM" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_LM" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_LM" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_LM" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_LM_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_LM_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="leg_center_LF" pos="0.1778 0.0825 0" quat="1 0 0 0">
+          <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+          <body name="coxa_LF" pos="0 0 0" quat="0.923879532511 0 0 0.382683432365">
+            <inertial mass="0.06" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001" />
+            <geom type="mesh" mesh="coxa" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+            <geom type="mesh" mesh="coxa" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+            <joint name="coxa_joint_LF" type="hinge" axis="0 0 1" range="-3.14 3.14" limited="true" />
+            <body name="femur_LF" pos="0.05893 0 0" quat="0.5 -0.5 0.5 0.5">
+              <inertial mass="0.08" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+              <geom type="mesh" mesh="femur" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+              <geom type="mesh" mesh="femur" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+              <joint name="femur_joint_LF" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+              <body name="tibia_LF" pos="0 -0.10798 0" quat="6.12323399574e-17 1 0 0">
+                <inertial mass="0.07" pos="0 0 0" diaginertia="2e-05 0.0002 0.0002" />
+                <geom type="mesh" mesh="tibia" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                <geom type="mesh" mesh="tibia" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                <joint name="tibia_joint_LF" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                <body name="tarsus_LF" pos="0.08774 0 0" quat="1 0 0 0">
+                  <inertial mass="0.02" pos="0 0 0" diaginertia="1e-05 5e-05 5e-05" />
+                  <geom type="mesh" mesh="tarsus" contype="0" conaffinity="0" material="gray" pos="0 0 0" quat="1 0 0 0" />
+                  <geom type="mesh" mesh="tarsus" contype="1" conaffinity="1" pos="0 0 0" quat="1 0 0 0" />
+                  <joint name="tarsus_joint_LF" type="hinge" axis="0 0 -1" range="-3.14 3.14" limited="true" />
+                  <body name="foot_LF" pos="0.12065 0 0" quat="1 0 0 0">
+                    <inertial mass="0.001" pos="0 0 0" diaginertia="1e-06 1e-06 1e-06" />
+                    <site name="foot_LF_site" pos="0 0 0" size="0.01" type="sphere" rgba="0.1 0.8 0.1 1" />
+                    <geom name="foot_LF_contact_geom" type="sphere" size="0.01" pos="0 0 0" contype="1" conaffinity="1" group="3" friction="1.0 0.005 0.0001" margin="0.002" gap="0" solref="0.004 1" solimp="0.95 0.99 0.0005 0.5 2" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="coxa_joint_RR_motor" joint="coxa_joint_RR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_RR_motor" joint="femur_joint_RR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_RR_motor" joint="tibia_joint_RR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_RR_motor" joint="tarsus_joint_RR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="coxa_joint_RM_motor" joint="coxa_joint_RM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_RM_motor" joint="femur_joint_RM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_RM_motor" joint="tibia_joint_RM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_RM_motor" joint="tarsus_joint_RM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="coxa_joint_RF_motor" joint="coxa_joint_RF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_RF_motor" joint="femur_joint_RF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_RF_motor" joint="tibia_joint_RF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_RF_motor" joint="tarsus_joint_RF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="coxa_joint_LR_motor" joint="coxa_joint_LR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_LR_motor" joint="femur_joint_LR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_LR_motor" joint="tibia_joint_LR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_LR_motor" joint="tarsus_joint_LR" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="coxa_joint_LM_motor" joint="coxa_joint_LM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_LM_motor" joint="femur_joint_LM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_LM_motor" joint="tibia_joint_LM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_LM_motor" joint="tarsus_joint_LM" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="coxa_joint_LF_motor" joint="coxa_joint_LF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="femur_joint_LF_motor" joint="femur_joint_LF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tibia_joint_LF_motor" joint="tibia_joint_LF" ctrlrange="-10 10" ctrllimited="true" />
+    <motor name="tarsus_joint_LF_motor" joint="tarsus_joint_LF" ctrlrange="-10 10" ctrllimited="true" />
+  </actuator>
+  <sensor>
+    <framepos name="imu_pos" objtype="site" objname="imu_site" />
+    <framequat name="imu_quat" objtype="site" objname="imu_site" />
+    <touch name="foot_RR_touch" site="foot_RR_site" />
+    <touch name="foot_RM_touch" site="foot_RM_site" />
+    <touch name="foot_RF_touch" site="foot_RF_site" />
+    <touch name="foot_LR_touch" site="foot_LR_site" />
+    <touch name="foot_LM_touch" site="foot_LM_site" />
+    <touch name="foot_LF_touch" site="foot_LF_site" />
+  </sensor>
+</mujoco>
