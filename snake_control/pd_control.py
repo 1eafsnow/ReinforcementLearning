@@ -46,7 +46,7 @@ class MitCommand:
     kd: float = 0.0
     tau_ff: float = 0.0
     tau_limit: float = 0.0
-    enabled: bool = True
+    enabled: bool = False
 
 
 @dataclass
@@ -319,7 +319,7 @@ class SnakeControlUi:
         for row, ((motor_name, joint_name, *_), command) in enumerate(zip(MOTOR_CONFIGS, self.controller.get_commands()), start=1):
             ttk.Label(main, text=f"{motor_name}\n{joint_name}").grid(row=row, column=0, padx=4, pady=3)
 
-            enable_var = tk.BooleanVar(value=True)
+            enable_var = tk.BooleanVar(value=command.enabled)
             self.enable_vars.append(enable_var)
             ttk.Checkbutton(main, variable=enable_var).grid(row=row, column=1, padx=4, pady=3)
 
