@@ -46,6 +46,12 @@
             <joint name="front_track_roller3_joint" class="track_contact"/>
             <geom name="front_track_contact3_geom" class="track_contact" size="0.055 0.015"/>
           </body>
+
+          <body name="lidar" pos="-0.55 0.0 0.17">
+            <!geom name="lidar_collision" type="box" pos="0.0 0.0 0.0" size="0.02 0.04 0.03" rgba="0.79216 0.81961 0.93333 1" contype="0" conaffinity="0" group="1"/>
+            <site name="lidar_site" type="box" pos="0.0 0.0 0.0" size="0.02 0.04 0.03" rgba="1 0 0 1"/>
+          </body>
+
         </body>
       </body>
 
