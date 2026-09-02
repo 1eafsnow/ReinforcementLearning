@@ -18,6 +18,6 @@
   </worldbody>
 
   <!-- 4. 关键：引入机器人 XML 模型 -->
-  <include file="snake_robot_tracks.xml"/>
+  <include file="snake_robot_tracks_simple_collision.xml"/>
 
 </mujoco>

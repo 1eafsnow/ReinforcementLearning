@@ -9,11 +9,11 @@
     </default>
   </default>
   <asset>
-    <mesh name="base_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/base_link.STL"/>
-    <mesh name="front_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/front_link.STL"/>
-    <mesh name="front_track" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/front_track.STL"/>
-    <mesh name="back_link" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/back_link.STL"/>
-    <mesh name="back_track" content_type="model/stl" file="/home/abc/snake/snake_description/meshes/back_track.STL"/>
+    <mesh name="base_link" content_type="model/stl" file="../meshes/base_link.STL"/>
+    <mesh name="front_link" content_type="model/stl" file="../meshes/front_link.STL"/>
+    <mesh name="front_track" content_type="model/stl" file="../meshes/front_track.STL"/>
+    <mesh name="back_link" content_type="model/stl" file="../meshes/back_link.STL"/>
+    <mesh name="back_track" content_type="model/stl" file="../meshes/back_track.STL"/>
   </asset>
   <worldbody>
     <body name="base_link" pos="0 0 0.5" quat="1 0 0 0">
