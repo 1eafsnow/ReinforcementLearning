@@ -21,12 +21,12 @@ MODEL_CANDIDATES = [
 ]
 
 MOTOR_CONFIGS = [
-    ("f1_motor", "front_joint1", 0.0, 0.0, 45.0, 5.0, 0.0, 36.0),
-    ("f2_motor", "front_joint2", 0.0, 0.0, 45.0, 5.0, 0.0, 36.0),
-    ("b1_motor", "back_joint1", 0.0, 0.0, 45.0, 5.0, 0.0, 36.0),
-    ("b2_motor", "back_joint2", 0.0, 0.0, 45.0, 5.0, 0.0, 36.0),
-    ("front_track_motor", "front_track_drive_joint", 0.0, 0.0, 0.0, 8.0, 0.0, 40.0),
-    ("back_track_motor", "back_track_drive_joint", 0.0, 0.0, 0.0, 8.0, 0.0, 40.0),
+    ("f1_motor", "front_joint1", 0.0, 0.0, 20.0, 5.0, 0.0, 36.0),
+    ("f2_motor", "front_joint2", 0.0, 0.0, 20.0, 5.0, 0.0, 36.0),
+    ("b1_motor", "back_joint1", 0.0, 0.0, 20.0, 5.0, 0.0, 36.0),
+    ("b2_motor", "back_joint2", 0.0, 0.0, 20.0, 5.0, 0.0, 36.0),
+    ("front_track_motor", "front_track_drive_joint", 0.0, 0.0, 0.0, 8.0, 0.0, 36.0),
+    ("back_track_motor", "back_track_drive_joint", 0.0, 0.0, 0.0, 8.0, 0.0, 36.0),
 ]
 
 LIDAR_SITE_NAME = "lidar_site"
