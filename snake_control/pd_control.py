@@ -1,5 +1,6 @@
 import os
 import signal
+import sys
 import threading
 import time
 import tkinter as tk
@@ -65,15 +66,15 @@ class SnakeMitController:
             self.qpos_ids.append(int(self.model.jnt_qposadr[joint_id]))
             self.dof_ids.append(int(self.model.jnt_dofadr[joint_id]))
 
-        self.commands = [
-            MitCommand(q_des=q, dq_des=dq, kp=kp, kd=kd, tau_ff=ff, tau_limit=limit)
-            for _, _, q, dq, kp, kd, ff, limit in MOTOR_CONFIGS
-        ]
+        self.commands = [MitCommand(q_des=q, dq_des=dq, kp=kp, kd=kd, tau_ff=ff, tau_limit=limit)
+                         for _, _, q, dq, kp, kd, ff, limit in MOTOR_CONFIGS]
         self.states = [MotorState() for _ in MOTOR_CONFIGS]
 
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.reset_event = threading.Event()
+        self.process_exit_event = threading.Event()
+        self.process_exit_ready = threading.Event()
         self.emergency_stop = False
         self.sim_thread = None
 
@@ -92,33 +93,31 @@ class SnakeMitController:
         if self.sim_thread is not None and self.sim_thread.is_alive():
             return
         self.stop_event.clear()
+        self.process_exit_event.clear()
+        self.process_exit_ready.clear()
         self.sim_thread = threading.Thread(target=self._simulation_loop, name="mujoco-simulation", daemon=True)
         self.sim_thread.start()
 
-    def request_stop(self):
+    def request_process_exit(self):
+        # Do not destroy GLFW/Tk windows here. On WSLg, a queued MIT-SHM frame can
+        # still reference the drawable while GLFW is tearing it down.
         with self.lock:
             self.emergency_stop = True
-            self._zero_output()
             self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
+        self.process_exit_event.set()
+
+    def request_graceful_stop(self):
+        with self.lock:
+            self.emergency_stop = True
         self.stop_event.set()
 
-    def is_stopped(self):
-        return self.sim_thread is None or not self.sim_thread.is_alive()
-
-    def join(self, timeout=None):
-        if self.sim_thread is not None and self.sim_thread is not threading.current_thread():
-            self.sim_thread.join(timeout=timeout)
-        return self.is_stopped()
-
     def reset(self):
-        if not self.stop_event.is_set():
+        if not self.stop_event.is_set() and not self.process_exit_event.is_set():
             self.reset_event.set()
 
     def set_emergency_stop(self, enabled):
         with self.lock:
             self.emergency_stop = enabled
-            if enabled:
-                self._zero_output()
 
     def set_commands(self, commands):
         with self.lock:
@@ -138,8 +137,6 @@ class SnakeMitController:
 
     def _simulation_loop(self):
         try:
-            # IMPORTANT: viewer is created, synchronized and destroyed in this same thread.
-            # Never call viewer.close() from the Tk/main thread on X11/WSLg.
             with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
                 while not self.stop_event.is_set():
                     if not viewer.is_running():
@@ -176,9 +173,14 @@ class SnakeMitController:
                     with self.lock:
                         self.states = new_states
 
+                    # Safe Exit waits for this flag. It is set only from the simulation
+                    # thread after ctrl/qfrc_applied have really been cleared, so Tk never
+                    # writes MjData concurrently with mj_step().
+                    if self.process_exit_event.is_set():
+                        self.process_exit_ready.set()
+
                     mujoco.mj_step(self.model, self.data)
 
-                    # Exit before touching the X11/GLFW window again.
                     if self.stop_event.is_set():
                         break
 
@@ -192,17 +194,21 @@ class SnakeMitController:
                     if sleep_time > 0.0:
                         self.stop_event.wait(sleep_time)
         finally:
+            # Safe Exit normally never reaches this teardown because os._exit() terminates
+            # the process first. This path remains for a manually closed viewer/error.
+            self._zero_output()
             with self.lock:
-                self._zero_output()
                 self.emergency_stop = True
                 self.states = [MotorState(q=s.q, dq=s.dq, tau=0.0) for s in self.states]
+            self.process_exit_ready.set()
             self.stop_event.set()
 
 
 class SnakeControlUi:
     UPDATE_PERIOD_MS = 50
-    SHUTDOWN_POLL_MS = 20
-    SHUTDOWN_TIMEOUT_S = 4.0
+    EXIT_POLL_MS = 10
+    EXIT_ZERO_TIMEOUT_S = 0.5
+    EXIT_GRACE_MS = 80
 
     def __init__(self, root, controller, signal_stop_event):
         self.root = root
@@ -212,7 +218,7 @@ class SnakeControlUi:
         self.state_labels = []
         self.enable_vars = []
         self.closing = False
-        self.shutdown_started_at = None
+        self.exit_started_at = None
 
         self.root.title("Snake Robot MIT Control")
         self.root.protocol("WM_DELETE_WINDOW", self._safe_exit)
@@ -226,7 +232,8 @@ class SnakeControlUi:
         main = ttk.Frame(self.root, padding=10)
         main.grid(row=0, column=0, sticky="nsew")
 
-        headers = ["Motor", "Enable", "q_des [rad]", "dq_des [rad/s]", "Kp", "Kd", "tau_ff [Nm]", "tau_limit [Nm]", "q", "dq", "tau"]
+        headers = ["Motor", "Enable", "q_des [rad]", "dq_des [rad/s]", "Kp", "Kd", "tau_ff [Nm]",
+                   "tau_limit [Nm]", "q", "dq", "tau"]
         for col, text in enumerate(headers):
             ttk.Label(main, text=text).grid(row=0, column=col, padx=4, pady=4)
 
@@ -238,7 +245,8 @@ class SnakeControlUi:
             ttk.Checkbutton(main, variable=enable_var).grid(row=row, column=1, padx=4, pady=3)
 
             row_entries = []
-            for offset, value in enumerate([command.q_des, command.dq_des, command.kp, command.kd, command.tau_ff, command.tau_limit]):
+            for offset, value in enumerate([command.q_des, command.dq_des, command.kp, command.kd,
+                                            command.tau_ff, command.tau_limit]):
                 entry = ttk.Entry(main, width=10)
                 entry.insert(0, f"{value:g}")
                 entry.grid(row=row, column=2 + offset, padx=3, pady=3)
@@ -278,10 +286,8 @@ class SnakeControlUi:
                 q_des, dq_des, kp, kd, tau_ff, tau_limit = [float(entry.get()) for entry in row_entries]
             except ValueError as exc:
                 raise ValueError(f"Invalid numeric value in row {i + 1}") from exc
-
             if kp < 0.0 or kd < 0.0 or tau_limit < 0.0:
                 raise ValueError(f"Kp, Kd and tau_limit must be >= 0 in row {i + 1}")
-
             commands.append(MitCommand(q_des, dq_des, kp, kd, tau_ff, tau_limit, self.enable_vars[i].get()))
         return commands
 
@@ -339,27 +345,35 @@ class SnakeControlUi:
             return
 
         self.closing = True
-        self.shutdown_started_at = time.monotonic()
-        self.controller.request_stop()
+        self.exit_started_at = time.monotonic()
+        self.controller.request_process_exit()
+
         self.exit_button.configure(state=tk.DISABLED)
         self.estop_button.configure(state=tk.DISABLED)
-        self.status_var.set("Safe shutdown: torque is zero; waiting for MuJoCo viewer thread...")
-        self.root.after(self.SHUTDOWN_POLL_MS, self._poll_shutdown)
+        self.status_var.set("Safe exit: requesting zero torque before process termination...")
+        self.root.after(self.EXIT_POLL_MS, self._poll_exit_zero)
 
-    def _poll_shutdown(self):
-        if self.controller.is_stopped():
-            self.status_var.set("Safe shutdown complete.")
-            self.root.after(0, self.root.destroy)
+    def _poll_exit_zero(self):
+        ready = self.controller.process_exit_ready.is_set()
+        timed_out = time.monotonic() - self.exit_started_at >= self.EXIT_ZERO_TIMEOUT_S
+
+        if ready or timed_out:
+            self.status_var.set("Torque zeroed. Closing without GLFW/X11 teardown...")
+            self.root.update_idletasks()
+            self.root.after(self.EXIT_GRACE_MS, self._hard_process_exit)
             return
 
-        if time.monotonic() - self.shutdown_started_at >= self.SHUTDOWN_TIMEOUT_S:
-            # Do not call viewer.close() here. On X11/WSLg, closing a GLFW window
-            # from the Tk/main thread can race with viewer.sync() and cause BadDrawable.
-            self.status_var.set("Viewer did not exit cleanly; terminating process without cross-thread window destruction.")
-            self.root.update_idletasks()
-            os._exit(0)
+        self.root.after(self.EXIT_POLL_MS, self._poll_exit_zero)
 
-        self.root.after(self.SHUTDOWN_POLL_MS, self._poll_shutdown)
+    @staticmethod
+    def _hard_process_exit():
+        # Deliberately bypass Tk/GLFW destructors. The OS/X server cleans both windows
+        # when the process disappears, avoiding WSLg's intermittent MIT-SHM BadDrawable.
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            os._exit(0)
 
 
 def main():
@@ -378,8 +392,11 @@ def main():
     try:
         root.mainloop()
     finally:
-        controller.request_stop()
-        controller.join(timeout=1.0)
+        # If mainloop exits unexpectedly, avoid entering GLFW teardown from another
+        # path. This control utility owns no persistent files that require cleanup.
+        controller.request_process_exit()
+        time.sleep(0.05)
+        os._exit(0)
 
 
 if __name__ == "__main__":
