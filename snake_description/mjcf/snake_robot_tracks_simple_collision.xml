@@ -52,26 +52,29 @@
       <body name="back_link" pos="0.3165 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
         <inertial pos="0.10621 0.029044 -0.076537" quat="0.47619 0.476017 0.522731 0.522879" mass="0.63341" diaginertia="0.00101967 0.00090044 0.000736344"/>
         <joint name="back_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
-        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_link" contype="0" conaffinity="0" group="1"/>
-        <geom name="back_link_collision" type="capsule" fromto="0.026 -0.015 -0.074 0.105 -0.015 -0.074" size="0.025" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+        <!-- back_link.STL contains an approximately +5.8 degree baked yaw relative to the mirrored front mesh; correct only the visual geom. -->
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_link" quat="0.998713 0 0 -0.050714" contype="0" conaffinity="0" group="1"/>
+        <geom name="back_link_collision" type="capsule" fromto="0.025 -0.015 -0.074 0.102 -0.015 -0.074" size="0.025" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
 
-        <body name="back_track" pos="0.13122 -0.034146 -0.0745" quat="0.707105 -0.707108 0 0">
+        <!-- Physics frame is an exact mirror of front_track. STL export skew is corrected only on the visual mesh below. -->
+        <body name="back_track" pos="0.12694 -0.047652 -0.0745" quat="0.707105 -0.707108 0 0">
           <inertial pos="0.32501 -0.084885 0.054393" quat="0.559637 0.559644 0.432211 0.432202" mass="2.8466" diaginertia="0.0243598 0.02133 0.00757138"/>
           <joint name="back_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
-          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_track" contype="0" conaffinity="0" group="1"/>
+          <!-- back_track.STL is rotated about +14.6 degrees in its exported local XY plane; undo that skew on the visual geom only. -->
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_track" quat="0.991844 0 0 0.127459" contype="0" conaffinity="0" group="1"/>
           <geom name="back_track_collision" type="box" pos="0.310 -0.008 0.060" size="0.250 0.068 0.065" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
 
-          <body name="back_track_contact1" pos="0.12 -0.005 0.025">
+          <body name="back_track_contact1" pos="0.52 -0.005 0.025">
             <joint name="back_track_drive_joint" class="track_contact"/>
-            <geom name="back_track_contact1_geom" class="track_contact" size="0.055 0.045"/>
+            <geom name="back_track_contact1_geom" class="track_contact" size="0.055 0.015"/>
           </body>
           <body name="back_track_contact2" pos="0.32 -0.005 0.025">
             <joint name="back_track_roller2_joint" class="track_contact"/>
-            <geom name="back_track_contact2_geom" class="track_contact" size="0.055 0.045"/>
+            <geom name="back_track_contact2_geom" class="track_contact" size="0.055 0.015"/>
           </body>
-          <body name="back_track_contact3" pos="0.52 -0.005 0.025">
+          <body name="back_track_contact3" pos="0.12 -0.005 0.025">
             <joint name="back_track_roller3_joint" class="track_contact"/>
-            <geom name="back_track_contact3_geom" class="track_contact" size="0.055 0.045"/>
+            <geom name="back_track_contact3_geom" class="track_contact" size="0.055 0.015"/>
           </body>
         </body>
       </body>
