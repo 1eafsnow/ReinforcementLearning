@@ -48,10 +48,9 @@
           </body>
 
           <body name="lidar" pos="-0.55 0.0 0.17">
-            <!geom name="lidar_collision" type="box" pos="0.0 0.0 0.0" size="0.02 0.04 0.03" rgba="0.79216 0.81961 0.93333 1" contype="0" conaffinity="0" group="1"/>
-            <site name="lidar_site" type="box" pos="0.0 0.0 0.0" size="0.02 0.04 0.03" rgba="1 0 0 1"/>
+            <!-- The site local +X axis points toward the robot front (front_track local -X). -->
+            <site name="lidar_site" type="box" pos="0 0 0" quat="0 0 0 1" size="0.02 0.04 0.03" rgba="1 0 0 0.25"/>
           </body>
-
         </body>
       </body>
 
