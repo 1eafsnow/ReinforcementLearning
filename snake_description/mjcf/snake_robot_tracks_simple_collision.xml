@@ -25,7 +25,7 @@
             size="0.250 0.104 0.076"
             rgba="0 1 0 0"
             density="0"
-            friction="0.30 0.005 0.0001"
+            friction="0.15 0 0"
             condim="3"
             contype="1"
             conaffinity="1"
@@ -40,7 +40,7 @@
               size="0.116 0.058 0.073"
               rgba="0 1 0 0"
               density="0"
-              friction="0.30 0.005 0.0001"
+              friction="0.15 0 0"
               condim="3"
               contype="1"
               conaffinity="1"
@@ -55,7 +55,7 @@
                 size="0.300 0.078 0.078"
                 rgba="0 1 0 0"
                 density="0"
-                friction="0.30 0.005 0.0001"
+                friction="0.15 0 0"
                 condim="3"
                 contype="1"
                 conaffinity="1"
@@ -84,7 +84,7 @@
               size="0.112 0.063 0.073"
               rgba="0 1 0 0"
               density="0"
-              friction="0.30 0.005 0.0001"
+              friction="0.15 0 0"
               condim="3"
               contype="1"
               conaffinity="1"
@@ -99,7 +99,7 @@
                 size="0.295 0.112 0.078"
                 rgba="0 1 0 0"
                 density="0"
-                friction="0.30 0.005 0.0001"
+                friction="0.15 0 0"
                 condim="3"
                 contype="1"
                 conaffinity="1"
@@ -120,7 +120,7 @@
       </body>
     </body>
   </worldbody>
-  <!-- Structural links use simple box collision geoms. Track-ground traction remains anisotropic through explicit plane-capsule contact pairs. -->
+  <!-- Structural links use simple low-friction box collision geoms. Track-ground traction remains anisotropic through explicit plane-capsule contact pairs. -->
   <contact>
     <!-- Adjacent simplified collision boxes are excluded so joint interfaces
          do not generate artificial self-contact when their boxes overlap slightly. -->
@@ -128,6 +128,15 @@
     <exclude name="exclude_front_link_track" body1="front_link" body2="front_track"/>
     <exclude name="exclude_base_back_link" body1="base_link" body2="back_link"/>
     <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
+
+    <!-- Explicit low-friction structural-link contacts prevent floor friction from overriding the link friction. -->
+    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.15 0.15 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.15 0.15 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.15 0.15 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.15 0.15 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.15 0.15 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+
+    <!-- Anisotropic track traction remains high and is independent from the low-friction structural shells. -->
     <pair name="front_track_ground_1" geom1="floor" geom2="front_track_contact1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="front_track_ground_2" geom1="floor" geom2="front_track_contact2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="front_track_ground_3" geom1="floor" geom2="front_track_contact3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
