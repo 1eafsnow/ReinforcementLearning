@@ -148,14 +148,26 @@ class SnakeAvoidEnv(gym.Env):
             raise ValueError("action_filter_alpha must lie in (0, 1]")
         if self.cfg.action_rate_limit <= 0.0 or self.cfg.track_effective_radius <= 0.0 or self.cfg.track_virtual_inertia <= 0.0:
             raise ValueError("Action rate and virtual track parameters must be positive")
-        if self.cfg.lidar_rows < 1 or self.cfg.lidar_cols < 1 or self.cfg.lidar_scan_hz <= 0.0 or self.cfg.lidar_max_range <= 0.0:
-            raise ValueError("LiDAR dimensions, rate and range must be positive")
+        if self.cfg.lidar_rows < 1 or self.cfg.lidar_cols < 4 or self.cfg.lidar_scan_hz <= 0.0 or self.cfg.lidar_max_range <= 0.0:
+            raise ValueError("LiDAR rows/rate/range must be positive and lidar_cols must be at least four")
         if not 0 <= self.cfg.lidar_group < 6 or not 0 <= self.cfg.floor_lidar_group < 6:
             raise ValueError("MuJoCo geom groups must be in [0, 5]")
         self._validate_range(self.cfg.goal_distance_range, "goal_distance_range")
         self._validate_range(self.cfg.goal_lateral_range, "goal_lateral_range")
         self._validate_range(self.cfg.obstacle_path_fraction_range, "obstacle_path_fraction_range")
         self._validate_range(self.cfg.obstacle_lateral_offset_range, "obstacle_lateral_offset_range")
+        rcfg = self.reward_cfg
+        if not 0.0 < rcfg.avoid_full_distance < rcfg.avoid_start_distance <= self.cfg.lidar_max_range:
+            raise ValueError("avoid distances must satisfy 0 < avoid_full_distance < avoid_start_distance <= lidar_max_range")
+        if not 0.0 < rcfg.avoid_front_fraction < 1.0:
+            raise ValueError("avoid_front_fraction must lie in (0, 1)")
+        if rcfg.avoid_side_difference_scale <= 0.0 or rcfg.avoid_turn_rate_scale <= 0.0:
+            raise ValueError("avoidance normalization scales must be positive")
+        relaxations = (rcfg.avoid_heading_relaxation, rcfg.avoid_speed_relaxation, rcfg.avoid_negative_progress_relaxation)
+        if any(value < 0.0 or value > 1.0 for value in relaxations):
+            raise ValueError("avoidance relaxation values must lie in [0, 1]")
+        if rcfg.avoid_symmetry_turn_bonus < 0.0:
+            raise ValueError("avoid_symmetry_turn_bonus must be non-negative")
 
     @staticmethod
     def _validate_range(value: Tuple[float, float], name: str) -> Tuple[float, float]:
@@ -261,6 +273,25 @@ class SnakeAvoidEnv(gym.Env):
     def _maybe_scan_lidar(self, force: bool = False) -> None:
         if force or self.step_count % self.lidar_interval_steps == 0:
             self._scan_lidar()
+
+    def _get_lidar_avoidance_state(self) -> Dict[str, float]:
+        cols = int(self.cfg.lidar_cols)
+        front_width = max(2, int(round(cols * self.reward_cfg.avoid_front_fraction)))
+        front_width = min(front_width, cols - 2)
+        center = cols // 2
+        front_start = max(1, center - front_width // 2)
+        front_end = min(cols - 1, front_start + front_width)
+        right_scan = self.lidar_scan[:, :front_start]
+        front_scan = self.lidar_scan[:, front_start:front_end]
+        left_scan = self.lidar_scan[:, front_end:]
+        front_clearance = float(np.min(front_scan))
+        left_clearance = float(np.min(left_scan))
+        right_clearance = float(np.min(right_scan))
+        denom = self.reward_cfg.avoid_start_distance - self.reward_cfg.avoid_full_distance
+        avoid_gate = float(np.clip((self.reward_cfg.avoid_start_distance - front_clearance) / denom, 0.0, 1.0))
+        side_delta = left_clearance - right_clearance
+        side_preference = float(np.tanh(side_delta / self.reward_cfg.avoid_side_difference_scale))
+        return {"front_clearance": front_clearance, "left_clearance": left_clearance, "right_clearance": right_clearance, "avoid_gate": avoid_gate, "side_preference": side_preference}
 
     def _get_obs(self, state: Optional[Dict[str, np.ndarray]] = None) -> np.ndarray:
         state = self._get_robot_state() if state is None else state
@@ -404,17 +435,36 @@ class SnakeAvoidEnv(gym.Env):
 
     def _compute_reward(self, state: Dict[str, np.ndarray], collision: bool, success: bool, mean_joint_torque_sq: float, mean_track_torque_sq: float, old_filtered_action: np.ndarray, older_filtered_action: np.ndarray) -> Tuple[float, Dict[str, float]]:
         cfg = self.reward_cfg
+        avoid = self._get_lidar_avoidance_state()
+        avoid_gate = avoid["avoid_gate"]
+
         goal_distance = float(state["goal_distance"])
         progress = float(np.clip(self.previous_goal_distance - goal_distance, -0.12, 0.12))
+        negative_progress_scale = 1.0 - cfg.avoid_negative_progress_relaxation * avoid_gate
+        shaped_progress = progress if progress >= 0.0 else progress * negative_progress_scale
+
         heading_error = float(state["heading_error"])
-        heading_reward = 0.5 * (np.cos(heading_error) + 1.0)
+        raw_heading_reward = 0.5 * (np.cos(heading_error) + 1.0)
+        heading_scale = 1.0 - cfg.avoid_heading_relaxation * avoid_gate
+        heading_reward = float(raw_heading_reward * heading_scale)
+
         goal_local = state["goal_local"]
         goal_norm = max(float(np.linalg.norm(goal_local)), 1e-6)
         speed_toward_goal = float(np.dot(state["base_lin_vel"][:2], goal_local / goal_norm))
-        speed_reward = float(np.clip(speed_toward_goal, -1.0, 1.0))
+        raw_speed_reward = float(np.clip(speed_toward_goal, -1.0, 1.0))
+        speed_scale = 1.0 - cfg.avoid_speed_relaxation * avoid_gate
+        speed_reward = raw_speed_reward * speed_scale
+
+        yaw_rate_normalized = float(np.clip(state["base_ang_vel"][2] / cfg.avoid_turn_rate_scale, -1.0, 1.0))
+        side_preference = avoid["side_preference"]
+        directed_turn_reward = side_preference * yaw_rate_normalized
+        symmetry_turn_reward = cfg.avoid_symmetry_turn_bonus * (1.0 - abs(side_preference)) * abs(yaw_rate_normalized)
+        avoid_turn_reward = float(avoid_gate * (directed_turn_reward + symmetry_turn_reward))
+
         lidar_min = float(np.min(self.lidar_scan))
-        clearance_penalty = float(max(self.cfg.reward.clearance_distance - lidar_min, 0.0) / self.cfg.reward.clearance_distance) ** 2
+        clearance_penalty = float(max(cfg.clearance_distance - lidar_min, 0.0) / cfg.clearance_distance) ** 2
         stall_penalty = float(goal_distance > self.cfg.goal_radius and abs(progress) < 5e-4 and abs(speed_toward_goal) < 0.03)
+        blocked_stall_penalty = avoid_gate * stall_penalty
         action_rate_penalty = float(np.mean((self.filtered_action - old_filtered_action) ** 2))
         action_acceleration_penalty = float(np.mean((self.filtered_action - 2.0 * old_filtered_action + older_filtered_action) ** 2))
         joint_pose_penalty = float(np.mean(((state["q"] - self.q_nominal) / np.maximum(self.joint_action_scale, 0.20)) ** 2))
@@ -423,11 +473,13 @@ class SnakeAvoidEnv(gym.Env):
         track_torque_penalty = float(mean_track_torque_sq / max(self.cfg.track_torque_limit ** 2, 1e-6))
 
         reward = (
-            cfg.progress_weight * progress
+            cfg.progress_weight * shaped_progress
             + cfg.heading_weight * heading_reward
             + cfg.speed_toward_goal_weight * speed_reward
+            + cfg.avoid_turn_weight * avoid_turn_reward
             - cfg.clearance_weight * clearance_penalty
             - cfg.stall_weight * stall_penalty
+            - cfg.blocked_stall_weight * blocked_stall_penalty
             - cfg.action_rate_weight * action_rate_penalty
             - cfg.action_acceleration_weight * action_acceleration_penalty
             - cfg.joint_pose_weight * joint_pose_penalty
@@ -442,12 +494,17 @@ class SnakeAvoidEnv(gym.Env):
             reward -= cfg.collision_penalty
 
         terms = {
-            "total": float(reward), "progress": progress, "heading": float(heading_reward), "speed_toward_goal": speed_toward_goal,
-            "clearance_penalty": clearance_penalty, "stall_penalty": stall_penalty, "action_rate_penalty": action_rate_penalty,
-            "action_acceleration_penalty": action_acceleration_penalty, "joint_pose_penalty": joint_pose_penalty,
-            "joint_velocity_penalty": joint_velocity_penalty, "joint_torque_penalty": joint_torque_penalty,
-            "track_torque_penalty": track_torque_penalty, "lidar_min": lidar_min, "goal_distance": goal_distance,
-            "heading_error": heading_error, "success": float(success), "collision": float(collision),
+            "total": float(reward), "progress": progress, "shaped_progress": float(shaped_progress),
+            "heading": heading_reward, "speed_toward_goal": speed_toward_goal, "speed_reward": float(speed_reward),
+            "avoid_turn_reward": avoid_turn_reward, "avoid_gate": avoid_gate,
+            "front_clearance": avoid["front_clearance"], "left_clearance": avoid["left_clearance"], "right_clearance": avoid["right_clearance"],
+            "side_preference": side_preference, "yaw_rate_normalized": yaw_rate_normalized,
+            "clearance_penalty": clearance_penalty, "stall_penalty": stall_penalty, "blocked_stall_penalty": blocked_stall_penalty,
+            "action_rate_penalty": action_rate_penalty, "action_acceleration_penalty": action_acceleration_penalty,
+            "joint_pose_penalty": joint_pose_penalty, "joint_velocity_penalty": joint_velocity_penalty,
+            "joint_torque_penalty": joint_torque_penalty, "track_torque_penalty": track_torque_penalty,
+            "lidar_min": lidar_min, "goal_distance": goal_distance, "heading_error": heading_error,
+            "success": float(success), "collision": float(collision),
         }
         return float(reward), terms
 
@@ -512,11 +569,14 @@ class SnakeAvoidEnv(gym.Env):
         return obs, info
 
     def _make_info(self, state: Dict[str, np.ndarray], reward_terms: Dict[str, float], termination_reason: str, collision_names: Tuple[str, ...], joint_torque: np.ndarray, track_torque: np.ndarray, q_des: np.ndarray, track_target: np.ndarray) -> Dict[str, object]:
+        avoid = self._get_lidar_avoidance_state()
         return {
             "reward_terms": reward_terms, "termination_reason": termination_reason,
             "base_position": state["base_pos"].copy(), "base_linear_velocity": state["base_lin_vel"].copy(), "base_angular_velocity": state["base_ang_vel"].copy(),
             "goal_position": self.goal_position.copy(), "goal_local": state["goal_local"].copy(), "goal_distance": float(state["goal_distance"]),
             "heading_error": float(state["heading_error"]), "lidar_min": float(np.min(self.lidar_scan)),
+            "front_clearance": avoid["front_clearance"], "left_clearance": avoid["left_clearance"], "right_clearance": avoid["right_clearance"],
+            "avoid_gate": avoid["avoid_gate"], "side_preference": avoid["side_preference"],
             "collision_geoms": collision_names, "success": bool(termination_reason == "goal_reached"), "collision": bool(termination_reason == "obstacle_collision"),
             "episode_progress": float(self.episode_progress), "path_length": float(self.path_length),
             "joint_torque": joint_torque.copy(), "track_torque": track_torque.copy(), "q_des": q_des.copy(),
