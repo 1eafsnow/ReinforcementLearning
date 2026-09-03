@@ -48,6 +48,8 @@ LIDAR_HFOV_DEG = 120.0
 LIDAR_VFOV_DEG = 90.0
 LIDAR_MAX_RANGE = 30.0
 LIDAR_SCAN_HZ = 10.0
+LIDAR_DEBUG_DRAW_RANGE = 5.0
+LIDAR_DEBUG_LINE_WIDTH = 1.0
 
 
 @dataclass
@@ -119,9 +121,17 @@ class SnakeSurfaceVelSliderController:
         self.lidar_scan = np.full((LIDAR_ROWS, LIDAR_COLS), LIDAR_MAX_RANGE, dtype=np.float32)
         self.lidar_dirs_local = self._build_lidar_directions()
         self.lidar_nray = LIDAR_ROWS * LIDAR_COLS
-        self.lidar_geomid = np.empty(self.lidar_nray, dtype=np.int32)
-        self.lidar_dist = np.empty(self.lidar_nray, dtype=np.float64)
+        self.lidar_geomid = np.full(self.lidar_nray, -1, dtype=np.int32)
+        self.lidar_dist = np.full(self.lidar_nray, -1.0, dtype=np.float64)
         self.lidar_geomgroup = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)
+        self.lidar_last_origin = np.zeros(3, dtype=np.float64)
+        self.lidar_last_dirs_world = np.zeros((self.lidar_nray, 3), dtype=np.float64)
+        self.lidar_last_dist = np.full(self.lidar_nray, -1.0, dtype=np.float64)
+        self.lidar_last_geomid = np.full(self.lidar_nray, -1, dtype=np.int32)
+        self.lidar_center_dist = -1.0
+        self.lidar_center_geomid = -1
+        self.lidar_hit_count = 0
+        self.lidar_debug_drawn = False
         self.lidar_next_time = 0.0
         self.lidar_has_normal_arg = self._mujoco_version_at_least(3, 8, 0)
 
@@ -133,8 +143,6 @@ class SnakeSurfaceVelSliderController:
         self.emergency_stop = False
         self.sim_thread = None
 
-        # Keep MuJoCo's surface-velocity path enabled even while every pad is at zero speed.
-        # This avoids mj_setConst calls each time the UI enables/disables a track.
         self.model.flg_surfacevel = 1
         self._set_all_track_surfacevel(0.0)
 
@@ -226,13 +234,21 @@ class SnakeSurfaceVelSliderController:
         with self.lock:
             return self.lidar_enabled, self.lidar_scan.copy(), self.lidar_error
 
+    def get_lidar_debug_state(self):
+        with self.lock:
+            geom_name = "none"
+            if self.lidar_center_geomid >= 0:
+                name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, self.lidar_center_geomid)
+                geom_name = name if name is not None else f"geom#{self.lidar_center_geomid}"
+            center_dist = self.lidar_center_dist if self.lidar_center_dist >= 0.0 else LIDAR_MAX_RANGE
+            return self.lidar_hit_count, float(center_dist), geom_name
+
     def _zero_output(self):
         self.data.ctrl[:] = 0.0
         self.data.qfrc_applied[:] = 0.0
         self.data.xfrc_applied[:] = 0.0
 
     def _set_track_surfacevel(self, command_index, omega):
-        # Robot front is track-local -X. The bottom tread therefore moves along pad-local +X for forward travel.
         surface_speed = TRACK_EFFECTIVE_RADIUS * float(omega)
         for geom_id in self.track_pad_geom_ids[command_index]:
             self.model.geom_surfacevel[geom_id, :] = 0.0
@@ -245,18 +261,78 @@ class SnakeSurfaceVelSliderController:
     def _scan_lidar(self):
         origin = self.data.site_xpos[self.lidar_site_id].copy()
         rotation = self.data.site_xmat[self.lidar_site_id].reshape(3, 3)
-        dirs_world = np.ascontiguousarray(self.lidar_dirs_local @ rotation.T, dtype=np.float64).reshape(-1)
+        dirs_world_2d = np.ascontiguousarray(self.lidar_dirs_local @ rotation.T, dtype=np.float64)
+        dirs_world = dirs_world_2d.reshape(-1)
+        self.lidar_geomid.fill(-1)
+        self.lidar_dist.fill(-1.0)
+
         if self.lidar_has_normal_arg:
             mujoco.mj_multiRay(self.model, self.data, origin, dirs_world, self.lidar_geomgroup, 1, -1, self.lidar_geomid, self.lidar_dist, None, self.lidar_nray, LIDAR_MAX_RANGE)
         else:
             mujoco.mj_multiRay(self.model, self.data, origin, dirs_world, self.lidar_geomgroup, 1, -1, self.lidar_geomid, self.lidar_dist, self.lidar_nray, LIDAR_MAX_RANGE)
+
+        center_geomid = np.array([-1], dtype=np.int32)
+        center_dir_world = np.ascontiguousarray(rotation[:, 0], dtype=np.float64)
+        center_dist = float(mujoco.mj_ray(self.model, self.data, origin, center_dir_world, self.lidar_geomgroup, 1, -1, center_geomid))
+
         ranges = self.lidar_dist.copy()
         ranges[ranges < 0.0] = LIDAR_MAX_RANGE
         np.clip(ranges, 0.0, LIDAR_MAX_RANGE, out=ranges)
         scan = ranges.reshape(LIDAR_ROWS, LIDAR_COLS).astype(np.float32)
+        hit_count = int(np.count_nonzero((self.lidar_geomid >= 0) & (self.lidar_dist >= 0.0)))
+
         with self.lock:
             self.lidar_scan = scan
+            self.lidar_last_origin = origin.copy()
+            self.lidar_last_dirs_world = dirs_world_2d.copy()
+            self.lidar_last_dist = self.lidar_dist.copy()
+            self.lidar_last_geomid = self.lidar_geomid.copy()
+            self.lidar_center_dist = center_dist
+            self.lidar_center_geomid = int(center_geomid[0])
+            self.lidar_hit_count = hit_count
             self.lidar_error = ""
+
+    def _draw_lidar_rays(self, viewer):
+        with self.lock:
+            enabled = self.lidar_enabled
+            origin = self.lidar_last_origin.copy()
+            directions = self.lidar_last_dirs_world.copy()
+            distances = self.lidar_last_dist.copy()
+            geomids = self.lidar_last_geomid.copy()
+
+        with viewer.lock():
+            scene = viewer.user_scn
+            scene.ngeom = 0
+            if not enabled:
+                self.lidar_debug_drawn = False
+                return
+
+            count = min(self.lidar_nray, scene.maxgeom)
+            for i in range(count):
+                hit = geomids[i] >= 0 and distances[i] >= 0.0
+                ray_length = min(float(distances[i]), LIDAR_DEBUG_DRAW_RANGE) if hit else LIDAR_DEBUG_DRAW_RANGE
+                end = origin + directions[i] * ray_length
+
+                if not hit:
+                    rgba = np.array([1.0, 0.0, 0.0, 0.25], dtype=np.float32)
+                elif geomids[i] == self.floor_geom_id:
+                    rgba = np.array([0.0, 0.5, 1.0, 0.8], dtype=np.float32)
+                else:
+                    rgba = np.array([0.0, 1.0, 0.0, 0.8], dtype=np.float32)
+
+                geom = scene.geoms[scene.ngeom]
+                mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_LINE, np.zeros(3), np.zeros(3), np.eye(3).reshape(-1), rgba)
+                mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_LINE, LIDAR_DEBUG_LINE_WIDTH, origin, end)
+                scene.ngeom += 1
+
+            self.lidar_debug_drawn = True
+
+    def _clear_lidar_rays(self, viewer):
+        if not self.lidar_debug_drawn:
+            return
+        with viewer.lock():
+            viewer.user_scn.ngeom = 0
+        self.lidar_debug_drawn = False
 
     def _measure_track_load_torque(self, command_index):
         pad_ids = set(self.track_pad_geom_ids[command_index])
@@ -284,8 +360,6 @@ class SnakeSurfaceVelSliderController:
             frame = np.asarray(contact.frame, dtype=np.float64).reshape(3, 3)
             force_world = frame.T @ contact_force[:3]
             force_on_pad = sign * force_world
-
-            # surfacevel[0] is pad-local +X. Reflect MuJoCo's actual tangential contact force back to the virtual motor shaft.
             pad_rotation = self.data.geom_xmat[pad_id].reshape(3, 3)
             surface_axis_world = pad_rotation[:, 0]
             total_surface_force += float(np.dot(force_on_pad, surface_axis_world))
@@ -384,11 +458,14 @@ class SnakeSurfaceVelSliderController:
                     if lidar_enabled and self.data.time >= self.lidar_next_time:
                         try:
                             self._scan_lidar()
+                            self._draw_lidar_rays(viewer)
                         except Exception as exc:
                             with self.lock:
                                 self.lidar_error = str(exc)
-                            print(f"LiDAR scan error: {exc}")
+                            print(f"LiDAR scan/draw error: {exc}")
                         self.lidar_next_time = self.data.time + 1.0 / LIDAR_SCAN_HZ
+                    elif not lidar_enabled:
+                        self._clear_lidar_rays(viewer)
 
                     if self.stop_event.is_set():
                         break
@@ -493,7 +570,7 @@ class SnakeControlUi:
 
         tip1 = "Joints: tau = Kp*(q_des-q) + Kd*(dq_des-dq) + tau_ff."
         tip2 = f"Tracks: tau = Kd*(dq_des-dq) + tau_ff, virtual J={TRACK_VIRTUAL_INERTIA:g} kg*m^2, radius={TRACK_EFFECTIVE_RADIUS:.3f} m, speed limit={TRACK_SPEED_LIMIT:g} rad/s."
-        tip3 = f"Track surfacevel = radius*dq; MuJoCo computes friction. Disable uses damping={TRACK_OFF_DAMPING:g}; Emergency Stop sets surfacevel to zero immediately."
+        tip3 = f"LiDAR rays: red=no hit, blue=floor, green=other geom; no-hit rays are drawn to {LIDAR_DEBUG_DRAW_RANGE:g} m."
         ttk.Label(main, text=tip1).grid(row=len(CONTROL_CONFIGS) + 4, column=0, columnspan=11, sticky="w", pady=(4, 0))
         ttk.Label(main, text=tip2).grid(row=len(CONTROL_CONFIGS) + 5, column=0, columnspan=11, sticky="w", pady=(2, 0))
         ttk.Label(main, text=tip3).grid(row=len(CONTROL_CONFIGS) + 6, column=0, columnspan=11, sticky="w", pady=(2, 0))
@@ -567,7 +644,8 @@ class SnakeControlUi:
         if lidar_error:
             self.lidar_status_var.set(f"LiDAR ERROR: {lidar_error}")
         elif lidar_enabled:
-            self.lidar_status_var.set(f"LiDAR: ON | 4x120 | min {float(np.min(lidar_scan)):.2f} m | max 30 m | 10 Hz")
+            hit_count, center_dist, center_geom = self.controller.get_lidar_debug_state()
+            self.lidar_status_var.set(f"LiDAR: ON | min {float(np.min(lidar_scan)):.2f} m | hits {hit_count}/{LIDAR_ROWS * LIDAR_COLS} | center {center_dist:.2f} m -> {center_geom}")
         else:
             self.lidar_status_var.set("LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
 
