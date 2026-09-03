@@ -30,15 +30,13 @@ CONTROL_CONFIGS = [
 ]
 
 TRACK_EFFECTIVE_RADIUS = 0.075
-TRACK_MU_LONG = 1.5
-TRACK_MU_LAT = 1.0
-TRACK_LATERAL_DAMPING = 120.0
-TRACK_ROLLING_DAMPING = 4.0
-TRACK_MIN_NORMAL_FORCE = 0.05
+TRACK_VIRTUAL_INERTIA = 0.08
+TRACK_MOTOR_DAMPING = 0.20
+TRACK_SPEED_LIMIT = 15.0
 
 TRACK_CONFIGS = {
-    4: ("front_track", ["front_track_pad1_geom", "front_track_pad2_geom", "front_track_pad3_geom"]),
-    5: ("back_track", ["back_track_pad1_geom", "back_track_pad2_geom", "back_track_pad3_geom"]),
+    4: ["front_track_pad1_geom", "front_track_pad2_geom", "front_track_pad3_geom"],
+    5: ["back_track_pad1_geom", "back_track_pad2_geom", "back_track_pad3_geom"],
 }
 
 LIDAR_SITE_NAME = "lidar_site"
@@ -68,8 +66,10 @@ class MotorState:
     tau: float = 0.0
 
 
-class SnakeFixedSliderController:
+class SnakeSurfaceVelSliderController:
     def __init__(self):
+        self._require_surfacevel_support()
+
         self.model_path = self._find_model()
         self.model = mujoco.MjModel.from_xml_path(str(self.model_path))
         self.data = mujoco.MjData(self.model)
@@ -88,19 +88,14 @@ class SnakeFixedSliderController:
             self.qpos_ids[i] = int(self.model.jnt_qposadr[joint_id])
             self.dof_ids[i] = int(self.model.jnt_dofadr[joint_id])
 
-        self.track_body_ids = {}
         self.track_pad_geom_ids = {}
-        for command_index, (body_name, pad_names) in TRACK_CONFIGS.items():
-            body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-            if body_id < 0:
-                raise RuntimeError(f"Track body not found: {body_name}")
+        for command_index, pad_names in TRACK_CONFIGS.items():
             geom_ids = []
             for geom_name in pad_names:
                 geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
                 if geom_id < 0:
                     raise RuntimeError(f"Track pad geom not found: {geom_name}")
                 geom_ids.append(int(geom_id))
-            self.track_body_ids[command_index] = int(body_id)
             self.track_pad_geom_ids[command_index] = geom_ids
 
         self.floor_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
@@ -109,6 +104,10 @@ class SnakeFixedSliderController:
 
         self.commands = [MitCommand(q_des=q, dq_des=dq, kp=kp, kd=kd, tau_ff=ff, tau_limit=limit) for _, _, _, q, dq, kp, kd, ff, limit in CONTROL_CONFIGS]
         self.states = [MotorState() for _ in CONTROL_CONFIGS]
+
+        self.track_angle = {4: 0.0, 5: 0.0}
+        self.track_omega = {4: 0.0, 5: 0.0}
+        self.track_load_tau = {4: 0.0, 5: 0.0}
 
         self.lidar_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, LIDAR_SITE_NAME)
         if self.lidar_site_id < 0:
@@ -132,6 +131,11 @@ class SnakeFixedSliderController:
         self.emergency_stop = False
         self.sim_thread = None
 
+        # Keep MuJoCo's surface-velocity path enabled even while every pad is at zero speed.
+        # This avoids mj_setConst calls each time the UI enables/disables a track.
+        self.model.flg_surfacevel = 1
+        self._set_all_track_surfacevel(0.0)
+
         mujoco.mj_resetData(self.model, self.data)
         mujoco.mj_forward(self.model, self.data)
 
@@ -144,14 +148,23 @@ class SnakeFixedSliderController:
         raise FileNotFoundError(f"Could not find scene_slider.xml. Searched:\n{searched}")
 
     @staticmethod
-    def _mujoco_version_at_least(major, minor, patch):
+    def _version_tuple():
         numbers = []
         for part in mujoco.__version__.split("."):
             digits = "".join(ch for ch in part if ch.isdigit())
             numbers.append(int(digits) if digits else 0)
         while len(numbers) < 3:
             numbers.append(0)
-        return tuple(numbers[:3]) >= (major, minor, patch)
+        return tuple(numbers[:3])
+
+    @classmethod
+    def _mujoco_version_at_least(cls, major, minor, patch):
+        return cls._version_tuple() >= (major, minor, patch)
+
+    @classmethod
+    def _require_surfacevel_support(cls):
+        if not cls._mujoco_version_at_least(3, 11, 0):
+            raise RuntimeError(f"pd_control_slider.py uses geom surfacevel and requires MuJoCo >= 3.11.0; installed version is {mujoco.__version__}")
 
     @staticmethod
     def _build_lidar_directions():
@@ -171,7 +184,7 @@ class SnakeFixedSliderController:
         self.stop_event.clear()
         self.process_exit_event.clear()
         self.process_exit_ready.clear()
-        self.sim_thread = threading.Thread(target=self._simulation_loop, name="mujoco-fixed-slider", daemon=True)
+        self.sim_thread = threading.Thread(target=self._simulation_loop, name="mujoco-surfacevel-slider", daemon=True)
         self.sim_thread.start()
 
     def request_process_exit(self):
@@ -216,6 +229,17 @@ class SnakeFixedSliderController:
         self.data.qfrc_applied[:] = 0.0
         self.data.xfrc_applied[:] = 0.0
 
+    def _set_track_surfacevel(self, command_index, omega):
+        # Robot front is track-local -X. The bottom tread therefore moves along pad-local +X for forward travel.
+        surface_speed = TRACK_EFFECTIVE_RADIUS * float(omega)
+        for geom_id in self.track_pad_geom_ids[command_index]:
+            self.model.geom_surfacevel[geom_id, :] = 0.0
+            self.model.geom_surfacevel[geom_id, 0] = surface_speed
+
+    def _set_all_track_surfacevel(self, omega):
+        for command_index in TRACK_CONFIGS:
+            self._set_track_surfacevel(command_index, omega)
+
     def _scan_lidar(self):
         origin = self.data.site_xpos[self.lidar_site_id].copy()
         rotation = self.data.site_xmat[self.lidar_site_id].reshape(3, 3)
@@ -232,92 +256,78 @@ class SnakeFixedSliderController:
             self.lidar_scan = scan
             self.lidar_error = ""
 
-    def _pad_normal_forces(self, pad_geom_ids):
-        normal_forces = np.zeros(len(pad_geom_ids), dtype=np.float64)
-        index_by_geom = {geom_id: i for i, geom_id in enumerate(pad_geom_ids)}
+    def _measure_track_load_torque(self, command_index):
+        pad_ids = set(self.track_pad_geom_ids[command_index])
         contact_force = np.zeros(6, dtype=np.float64)
+        total_surface_force = 0.0
+
         for contact_id in range(self.data.ncon):
             contact = self.data.contact[contact_id]
             g1 = int(contact.geom1)
             g2 = int(contact.geom2)
-            pad_geom = None
-            if g1 == self.floor_geom_id and g2 in index_by_geom:
-                pad_geom = g2
-            elif g2 == self.floor_geom_id and g1 in index_by_geom:
-                pad_geom = g1
-            if pad_geom is None:
+
+            if g1 == self.floor_geom_id and g2 in pad_ids:
+                pad_id = g2
+                sign = 1.0
+            elif g2 == self.floor_geom_id and g1 in pad_ids:
+                pad_id = g1
+                sign = -1.0
+            else:
                 continue
+
+            if int(contact.efc_address) < 0:
+                continue
+
             mujoco.mj_contactForce(self.model, self.data, contact_id, contact_force)
-            normal_forces[index_by_geom[pad_geom]] += max(0.0, float(contact_force[0]))
-        return normal_forces
+            frame = np.asarray(contact.frame, dtype=np.float64).reshape(3, 3)
+            force_world = frame.T @ contact_force[:3]
+            force_on_pad = sign * force_world
 
-    def _track_axes_and_pad_velocities(self, body_id, pad_geom_ids):
-        rotation = self.data.xmat[body_id].reshape(3, 3)
-        forward_axis = -rotation[:, 0].copy()
-        lateral_axis = rotation[:, 1].copy()
-        body_velocity = np.zeros(6, dtype=np.float64)
-        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, body_id, body_velocity, 0)
-        angular_velocity = body_velocity[:3]
-        linear_velocity = body_velocity[3:]
-        body_origin = self.data.xpos[body_id]
-        v_long = np.zeros(len(pad_geom_ids), dtype=np.float64)
-        v_lat = np.zeros(len(pad_geom_ids), dtype=np.float64)
-        points = []
-        for i, geom_id in enumerate(pad_geom_ids):
-            point = self.data.geom_xpos[geom_id].copy()
-            point_velocity = linear_velocity + np.cross(angular_velocity, point - body_origin)
-            v_long[i] = float(np.dot(point_velocity, forward_axis))
-            v_lat[i] = float(np.dot(point_velocity, lateral_axis))
-            points.append(point)
-        return forward_axis, lateral_axis, v_long, v_lat, points
+            # surfacevel[0] is pad-local +X. Reflect MuJoCo's actual tangential contact force back to the virtual motor shaft.
+            pad_rotation = self.data.geom_xmat[pad_id].reshape(3, 3)
+            surface_axis_world = pad_rotation[:, 0]
+            total_surface_force += float(np.dot(force_on_pad, surface_axis_world))
 
-    @staticmethod
-    def _limit_friction_ellipse(f_long, f_lat, normal_force):
-        if normal_force <= TRACK_MIN_NORMAL_FORCE:
-            return 0.0, 0.0
-        long_limit = TRACK_MU_LONG * normal_force
-        lat_limit = TRACK_MU_LAT * normal_force
-        normalized = (f_long / long_limit) ** 2 + (f_lat / lat_limit) ** 2
-        if normalized > 1.0:
-            scale = 1.0 / np.sqrt(normalized)
-            f_long *= scale
-            f_lat *= scale
-        return f_long, f_lat
+        return TRACK_EFFECTIVE_RADIUS * total_surface_force
 
-    def _apply_track_forces(self, command_index, command, emergency_stop):
-        body_id = self.track_body_ids[command_index]
-        pad_geom_ids = self.track_pad_geom_ids[command_index]
-        normal_forces = self._pad_normal_forces(pad_geom_ids)
-        forward_axis, lateral_axis, v_long, v_lat, points = self._track_axes_and_pad_velocities(body_id, pad_geom_ids)
+    def _update_track_motor(self, command_index, command, emergency_stop):
+        dt = float(self.model.opt.timestep)
+        omega = float(self.track_omega[command_index])
+        angle = float(self.track_angle[command_index])
+        load_tau = float(self._measure_track_load_torque(command_index))
 
-        normal_total = float(np.sum(normal_forces))
-        measured_linear_speed = float(np.dot(normal_forces, v_long) / normal_total) if normal_total > TRACK_MIN_NORMAL_FORCE else float(np.mean(v_long))
-        measured_track_speed = measured_linear_speed / TRACK_EFFECTIVE_RADIUS
         if emergency_stop:
-            return MotorState(q=0.0, dq=measured_track_speed, tau=0.0)
-
-        if command.enabled:
-            tau_cmd = command.kd * (command.dq_des - measured_track_speed) + command.tau_ff
-            tau_limit = max(0.0, command.tau_limit)
-            tau_cmd = float(np.clip(tau_cmd, -tau_limit, tau_limit))
-            desired_total_force = tau_cmd / TRACK_EFFECTIVE_RADIUS
+            tau_motor = 0.0
+            omega = 0.0
+            load_tau = 0.0
         else:
-            tau_cmd = 0.0
-            desired_total_force = 0.0
+            if command.enabled:
+                tau_motor = command.kd * (command.dq_des - omega) + command.tau_ff
+                tau_limit = max(0.0, command.tau_limit)
+                tau_motor = float(np.clip(tau_motor, -tau_limit, tau_limit))
+            else:
+                tau_motor = 0.0
 
-        zero_torque = np.zeros(3, dtype=np.float64)
-        for i, normal_force in enumerate(normal_forces):
-            if normal_force <= TRACK_MIN_NORMAL_FORCE:
-                continue
-            load_ratio = normal_force / normal_total if normal_total > TRACK_MIN_NORMAL_FORCE else 0.0
-            drive_force = desired_total_force * load_ratio
-            rolling_force = -TRACK_ROLLING_DAMPING * v_long[i]
-            lateral_force = -TRACK_LATERAL_DAMPING * v_lat[i]
-            f_long, f_lat = self._limit_friction_ellipse(drive_force + rolling_force, lateral_force, normal_force)
-            force_world = forward_axis * f_long + lateral_axis * f_lat
-            mujoco.mj_applyFT(self.model, self.data, force_world, zero_torque, points[i], body_id, self.data.qfrc_applied)
+            net_tau = tau_motor + load_tau - TRACK_MOTOR_DAMPING * omega
+            omega += (net_tau / TRACK_VIRTUAL_INERTIA) * dt
+            omega = float(np.clip(omega, -TRACK_SPEED_LIMIT, TRACK_SPEED_LIMIT))
+            if not command.enabled and abs(omega) < 1e-5:
+                omega = 0.0
 
-        return MotorState(q=0.0, dq=measured_track_speed, tau=tau_cmd)
+        angle += omega * dt
+        self.track_angle[command_index] = angle
+        self.track_omega[command_index] = omega
+        self.track_load_tau[command_index] = load_tau
+        self._set_track_surfacevel(command_index, omega)
+
+        return MotorState(q=angle, dq=omega, tau=tau_motor)
+
+    def _reset_track_state(self):
+        for command_index in TRACK_CONFIGS:
+            self.track_angle[command_index] = 0.0
+            self.track_omega[command_index] = 0.0
+            self.track_load_tau[command_index] = 0.0
+        self._set_all_track_surfacevel(0.0)
 
     def _simulation_loop(self):
         try:
@@ -325,10 +335,12 @@ class SnakeFixedSliderController:
                 while not self.stop_event.is_set():
                     if not viewer.is_running():
                         break
+
                     step_start = time.perf_counter()
 
                     if self.reset_event.is_set():
                         mujoco.mj_resetData(self.model, self.data)
+                        self._reset_track_state()
                         mujoco.mj_forward(self.model, self.data)
                         self.lidar_next_time = 0.0
                         self.reset_event.clear()
@@ -355,7 +367,7 @@ class SnakeFixedSliderController:
                         new_states[i] = MotorState(q=q, dq=dq, tau=tau)
 
                     for command_index in (4, 5):
-                        new_states[command_index] = self._apply_track_forces(command_index, commands[command_index], emergency_stop)
+                        new_states[command_index] = self._update_track_motor(command_index, commands[command_index], emergency_stop)
 
                     with self.lock:
                         self.states = new_states
@@ -376,6 +388,7 @@ class SnakeFixedSliderController:
 
                     if self.stop_event.is_set():
                         break
+
                     try:
                         viewer.sync()
                     except Exception as exc:
@@ -387,6 +400,7 @@ class SnakeFixedSliderController:
                         self.stop_event.wait(sleep_time)
         finally:
             self._zero_output()
+            self._set_all_track_surfacevel(0.0)
             with self.lock:
                 self.emergency_stop = True
                 self.lidar_enabled = False
@@ -411,9 +425,10 @@ class SnakeControlUi:
         self.closing = False
         self.exit_started_at = None
 
-        self.root.title("Snake Robot Fixed-Slider Control")
+        self.root.title("Snake Robot SurfaceVel Slider Control")
         self.root.protocol("WM_DELETE_WINDOW", self._safe_exit)
         self.root.bind("<Control-c>", lambda _event: self._safe_exit())
+
         self._build_ui()
         self.controller.start()
         self.root.after(self.UPDATE_PERIOD_MS, self._refresh_state)
@@ -421,13 +436,15 @@ class SnakeControlUi:
     def _build_ui(self):
         main = ttk.Frame(self.root, padding=10)
         main.grid(row=0, column=0, sticky="nsew")
+
         headers = ["Motor", "Enable", "q_des [rad]", "dq_des [rad/s]", "Kp", "Kd", "tau_ff [Nm]", "tau_limit [Nm]", "q", "dq", "tau"]
         for col, text in enumerate(headers):
             ttk.Label(main, text=text).grid(row=0, column=col, padx=4, pady=4)
 
         for row, ((control_name, object_name, kind, *_), command) in enumerate(zip(CONTROL_CONFIGS, self.controller.get_commands()), start=1):
-            suffix = "\n(slider model)" if kind == "track" else ""
+            suffix = "\n(surfacevel)" if kind == "track" else ""
             ttk.Label(main, text=f"{control_name}\n{object_name}{suffix}").grid(row=row, column=0, padx=4, pady=3)
+
             enable_var = tk.BooleanVar(value=command.enabled)
             self.enable_vars.append(enable_var)
             ttk.Checkbutton(main, variable=enable_var).grid(row=row, column=1, padx=4, pady=3)
@@ -456,20 +473,23 @@ class SnakeControlUi:
 
         self.estop_button = ttk.Button(controls, text="Emergency Stop", command=self._toggle_estop)
         self.estop_button.grid(row=0, column=4, padx=6)
+
         self.lidar_var = tk.BooleanVar(value=False)
         self.lidar_toggle = ttk.Checkbutton(controls, text="LiDAR", variable=self.lidar_var, command=self._toggle_lidar)
         self.lidar_toggle.grid(row=0, column=5, padx=(18, 6))
+
         self.exit_button = ttk.Button(controls, text="Safe Exit", command=self._safe_exit)
         self.exit_button.grid(row=0, column=6, padx=(18, 0))
 
         self.lidar_status_var = tk.StringVar(value="LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
         ttk.Label(main, textvariable=self.lidar_status_var).grid(row=len(CONTROL_CONFIGS) + 2, column=0, columnspan=11, sticky="w", pady=(10, 0))
+
         self.status_var = tk.StringVar(value=f"Model: {self.controller.model_path}")
         ttk.Label(main, textvariable=self.status_var).grid(row=len(CONTROL_CONFIGS) + 3, column=0, columnspan=11, sticky="w", pady=(4, 0))
 
         tip1 = "Joints: tau = Kp*(q_des-q) + Kd*(dq_des-dq) + tau_ff."
-        tip2 = f"Tracks: q_des/Kp unused; dq_des=equivalent track speed, Kd=velocity gain, effective radius={TRACK_EFFECTIVE_RADIUS:.3f} m."
-        tip3 = f"Traction: mu_long={TRACK_MU_LONG:g}, mu_lat={TRACK_MU_LAT:g}, lateral damping={TRACK_LATERAL_DAMPING:g} N/(m/s). Positive track speed points toward robot front."
+        tip2 = f"Tracks: tau = Kd*(dq_des-dq) + tau_ff, virtual J={TRACK_VIRTUAL_INERTIA:g} kg*m^2, radius={TRACK_EFFECTIVE_RADIUS:.3f} m, speed limit={TRACK_SPEED_LIMIT:g} rad/s."
+        tip3 = "Track surfacevel = radius*dq; MuJoCo computes all pad-ground friction. Positive dq drives the robot toward its front."
         ttk.Label(main, text=tip1).grid(row=len(CONTROL_CONFIGS) + 4, column=0, columnspan=11, sticky="w", pady=(4, 0))
         ttk.Label(main, text=tip2).grid(row=len(CONTROL_CONFIGS) + 5, column=0, columnspan=11, sticky="w", pady=(2, 0))
         ttk.Label(main, text=tip3).grid(row=len(CONTROL_CONFIGS) + 6, column=0, columnspan=11, sticky="w", pady=(2, 0))
@@ -553,23 +573,27 @@ class SnakeControlUi:
     def _safe_exit(self):
         if self.closing:
             return
+
         self.closing = True
         self.exit_started_at = time.monotonic()
         self.controller.request_process_exit()
+
         self.exit_button.configure(state=tk.DISABLED)
         self.estop_button.configure(state=tk.DISABLED)
         self.lidar_toggle.configure(state=tk.DISABLED)
-        self.status_var.set("Safe exit: requesting zero torque before process termination...")
+        self.status_var.set("Safe exit: requesting zero torque/surface velocity before process termination...")
         self.root.after(self.EXIT_POLL_MS, self._poll_exit_zero)
 
     def _poll_exit_zero(self):
         ready = self.controller.process_exit_ready.is_set()
         timed_out = time.monotonic() - self.exit_started_at >= self.EXIT_ZERO_TIMEOUT_S
+
         if ready or timed_out:
-            self.status_var.set("Torque zeroed. Closing without GLFW/X11 teardown...")
+            self.status_var.set("Outputs zeroed. Closing without GLFW/X11 teardown...")
             self.root.update_idletasks()
             self.root.after(self.EXIT_GRACE_MS, self._hard_process_exit)
             return
+
         self.root.after(self.EXIT_POLL_MS, self._poll_exit_zero)
 
     @staticmethod
@@ -589,7 +613,8 @@ def main():
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
-    controller = SnakeFixedSliderController()
+
+    controller = SnakeSurfaceVelSliderController()
     root = tk.Tk()
     SnakeControlUi(root, controller, signal_stop_event)
 
