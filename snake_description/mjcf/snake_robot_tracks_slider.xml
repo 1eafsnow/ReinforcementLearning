@@ -22,7 +22,8 @@
     <body name="base_link" pos="0 0 0.5" quat="1 0 0 0">
       <freejoint name="floating_base"/>
       <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="base_link" contype="0" conaffinity="0" group="1"/>
-      <geom name="base_link_collision" type="box" pos="0.120 0 -0.040" size="0.145 0.075 0.065" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+      <geom name="base_link_collision" type="box" pos="0.120 0 -0.040" size="0.145 0.075 0.060" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+      <geom name="base_link_pad" type="box" pos="0.125 0.0 -0.1" size="0.060 0.060 0.010" rgba="0 0 1 0.25" density="0" friction="0.05 0 0" condim="3" contype="0" conaffinity="0" group="3"/>
 
       <body name="front_link" pos="-0.0765 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
         <inertial pos="-0.10865 0.017803 -0.076529" quat="0.497061 0.497362 0.502973 0.502573" mass="0.63341" diaginertia="0.00101974 0.00090037 0.000736405"/>
@@ -74,11 +75,12 @@
     <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
 
     <!-- Structural collision shapes can touch the floor but do not add tangential traction. -->
-    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.15 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.15 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.15 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.15 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.15 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="base_pad_ground_contact" geom1="floor" geom2="base_link_pad" condim="3" friction="0.1 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
 
     <!-- MuJoCo computes all tangential friction caused by surfacevel. Explicit pairs preserve anisotropic sliding friction. -->
     <pair name="front_track_ground_1" geom1="floor" geom2="front_track_pad1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
