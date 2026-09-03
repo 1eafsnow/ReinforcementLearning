@@ -5,8 +5,8 @@
 
   <default>
     <default class="track_pad">
-      <!-- Fixed virtual track pads. They have no joint/DOF and only collide with the floor through explicit pairs below. -->
-      <geom type="box" rgba="1 0.5 0 0.35" friction="1 0.005 0.0001" condim="3" contype="0" conaffinity="0" density="0" group="3"/>
+      <!-- Fixed virtual track pads. Tangential traction is computed by the controller; MuJoCo only supplies normal contact. -->
+      <geom type="box" rgba="1 0.5 0 0.35" friction="0 0 0" condim="1" contype="0" conaffinity="0" density="0" group="3"/>
     </default>
   </default>
 
@@ -78,25 +78,23 @@
     <exclude name="exclude_base_back_link" body1="base_link" body2="back_link"/>
     <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
 
-    <!-- Structural collision shapes have zero floor friction; track pads provide the ground traction/contact. -->
+    <!-- Structural collision shapes have zero floor friction; track pads provide the ground normal support. -->
     <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
 
-    <!-- Keep the same anisotropic floor friction as the rolling-capsule model. -->
-    <pair name="front_track_ground_1" geom1="floor" geom2="front_track_pad1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_track_ground_2" geom1="floor" geom2="front_track_pad2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_track_ground_3" geom1="floor" geom2="front_track_pad3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_track_ground_1" geom1="floor" geom2="back_track_pad1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_track_ground_2" geom1="floor" geom2="back_track_pad2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_track_ground_3" geom1="floor" geom2="back_track_pad3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <!-- Normal-only pad contacts. Longitudinal/lateral traction is applied in pd_control_fixed_slider.py. -->
+    <pair name="front_track_ground_1" geom1="floor" geom2="front_track_pad1_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_2" geom1="floor" geom2="front_track_pad2_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_3" geom1="floor" geom2="front_track_pad3_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_1" geom1="floor" geom2="back_track_pad1_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_2" geom1="floor" geom2="back_track_pad2_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_3" geom1="floor" geom2="back_track_pad3_geom" condim="1" friction="0 0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
   </contact>
 
-  <!-- Track drive actuators are intentionally absent in this fixed-slider model.
-       Apply longitudinal/lateral track traction from the controller or RL environment,
-       e.g. through xfrc_applied/qfrc_applied based on commanded track speed and slip. -->
+  <!-- Track drive actuators are intentionally absent in this fixed-slider model. -->
   <actuator>
     <motor name="f1_motor" joint="front_joint1" ctrlrange="-36 36" ctrllimited="true"/>
     <motor name="f2_motor" joint="front_joint2" ctrlrange="-36 36" ctrllimited="true"/>
