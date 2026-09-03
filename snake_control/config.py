@@ -18,6 +18,17 @@ class RewardConfig:
     speed_toward_goal_weight: float = 0.25
     clearance_weight: float = 0.30
     clearance_distance: float = 0.65
+    avoid_turn_weight: float = 0.45
+    blocked_stall_weight: float = 0.20
+    avoid_start_distance: float = 1.25
+    avoid_full_distance: float = 0.45
+    avoid_front_fraction: float = 0.25
+    avoid_side_difference_scale: float = 0.50
+    avoid_turn_rate_scale: float = 1.00
+    avoid_heading_relaxation: float = 0.90
+    avoid_speed_relaxation: float = 0.85
+    avoid_negative_progress_relaxation: float = 0.85
+    avoid_symmetry_turn_bonus: float = 0.25
     stall_weight: float = 0.12
     action_rate_weight: float = 0.04
     action_acceleration_weight: float = 0.015
