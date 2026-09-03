@@ -1,0 +1,106 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mujoco model="snake_robot_fixed_slider">
+  <compiler angle="radian"/>
+  <option timestep="0.001" gravity="0 0 -9.81" solver="Newton" iterations="50" integrator="implicitfast" cone="elliptic"/>
+
+  <default>
+    <default class="track_pad">
+      <!-- Fixed virtual track pads. They have no joint/DOF and only collide with the floor through explicit pairs below. -->
+      <geom type="box" rgba="1 0.5 0 0.35" friction="1 0.005 0.0001" condim="3" contype="0" conaffinity="0" density="0" group="3"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="../meshes/base_link.STL"/>
+    <mesh name="front_link" content_type="model/stl" file="../meshes/front_link.STL"/>
+    <mesh name="front_track" content_type="model/stl" file="../meshes/front_track.STL"/>
+    <mesh name="back_link" content_type="model/stl" file="../meshes/back_link.STL"/>
+    <mesh name="back_track" content_type="model/stl" file="../meshes/back_track.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link" pos="0 0 0.5" quat="1 0 0 0">
+      <freejoint name="floating_base"/>
+      <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="base_link" contype="0" conaffinity="0" group="1"/>
+      <geom name="base_link_collision" type="box" pos="0.120 0 -0.040" size="0.145 0.075 0.065" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+
+      <body name="front_link" pos="-0.0765 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="-0.10865 0.017803 -0.076529" quat="0.497061 0.497362 0.502973 0.502573" mass="0.63341" diaginertia="0.00101974 0.00090037 0.000736405"/>
+        <joint name="front_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_link" contype="0" conaffinity="0" group="1"/>
+        <geom name="front_link_collision" type="capsule" fromto="-0.025 -0.015 -0.074 -0.102 -0.015 -0.074" size="0.025" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+
+        <body name="front_track" pos="-0.12694 -0.047652 -0.0745" quat="0.707105 -0.707108 0 0">
+          <inertial pos="-0.33739 -0.00064039 0.05406" quat="0.49988 0.500306 0.499664 0.500149" mass="3.1288" diaginertia="0.025033 0.022341 0.0080057"/>
+          <joint name="front_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="front_track" contype="0" conaffinity="0" group="1"/>
+          <geom name="front_track_collision" type="box" pos="-0.350 0.0 0.060" size="0.250 0.068 0.065" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+
+          <!-- Fixed track sliders. Bottom Z is -0.015 m, matching the old rolling-capsule contact height. -->
+          <geom name="front_track_pad1_geom" class="track_pad" pos="-0.50 0 -0.005" size="0.075 0.060 0.010"/>
+          <geom name="front_track_pad2_geom" class="track_pad" pos="-0.35 0 -0.005" size="0.075 0.060 0.010"/>
+          <geom name="front_track_pad3_geom" class="track_pad" pos="-0.20 0 -0.005" size="0.075 0.060 0.010"/>
+
+          <body name="lidar" pos="-0.55 0.0 0.17">
+            <!-- The site local +X axis points toward the robot front (front_track local -X). -->
+            <site name="lidar_site" type="box" pos="0 0 0" quat="0 0 0 1" size="0.02 0.04 0.03" rgba="1 0 0 0.25"/>
+          </body>
+        </body>
+      </body>
+
+      <body name="back_link" pos="0.3165 -0.0745 -0.0465" quat="0.707105 0.707108 0 0">
+        <inertial pos="0.10621 0.029044 -0.076537" quat="0.47619 0.476017 0.522731 0.522879" mass="0.63341" diaginertia="0.00101967 0.00090044 0.000736344"/>
+        <joint name="back_joint1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+        <!-- back_link.STL contains an approximately +5.8 degree baked yaw relative to the mirrored front mesh; correct only the visual geom. -->
+        <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_link" quat="0.998713 0 0 -0.050714" contype="0" conaffinity="0" group="1"/>
+        <geom name="back_link_collision" type="capsule" fromto="0.025 -0.015 -0.074 0.102 -0.015 -0.074" size="0.025" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+
+        <!-- Physics frame is an exact mirror of front_track. STL export skew is corrected only on the visual mesh below. -->
+        <body name="back_track" pos="0.12694 -0.047652 -0.0745" quat="0.707105 -0.707108 0 0">
+          <inertial pos="0.32501 -0.084885 0.054393" quat="0.559637 0.559644 0.432211 0.432202" mass="2.8466" diaginertia="0.0243598 0.02133 0.00757138"/>
+          <joint name="back_joint2" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-100 100" damping="0.8" armature="0.02"/>
+          <!-- back_track.STL is rotated about +14.6 degrees in its exported local XY plane; undo that skew on the visual geom only. -->
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="back_track" quat="0.991844 0 0 0.127459" contype="0" conaffinity="0" group="1"/>
+          <geom name="back_track_collision" type="box" pos="0.350 0.0 0.060" size="0.250 0.068 0.065" rgba="0 1 0 0.25" density="0" friction="0.15 0 0" condim="3" contype="1" conaffinity="1" group="2"/>
+
+          <!-- Fixed track sliders, mirrored from the front side. -->
+          <geom name="back_track_pad1_geom" class="track_pad" pos="0.50 0 -0.005" size="0.075 0.060 0.010"/>
+          <geom name="back_track_pad2_geom" class="track_pad" pos="0.35 0 -0.005" size="0.075 0.060 0.010"/>
+          <geom name="back_track_pad3_geom" class="track_pad" pos="0.20 0 -0.005" size="0.075 0.060 0.010"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude name="exclude_base_front_link" body1="base_link" body2="front_link"/>
+    <exclude name="exclude_front_link_track" body1="front_link" body2="front_track"/>
+    <exclude name="exclude_base_back_link" body1="base_link" body2="back_link"/>
+    <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
+
+    <!-- Structural collision shapes have zero floor friction; track pads provide the ground traction/contact. -->
+    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+
+    <!-- Keep the same anisotropic floor friction as the rolling-capsule model. -->
+    <pair name="front_track_ground_1" geom1="floor" geom2="front_track_pad1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_2" geom1="floor" geom2="front_track_pad2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_ground_3" geom1="floor" geom2="front_track_pad3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_1" geom1="floor" geom2="back_track_pad1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_2" geom1="floor" geom2="back_track_pad2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_ground_3" geom1="floor" geom2="back_track_pad3_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+  </contact>
+
+  <!-- Track drive actuators are intentionally absent in this fixed-slider model.
+       Apply longitudinal/lateral track traction from the controller or RL environment,
+       e.g. through xfrc_applied/qfrc_applied based on commanded track speed and slip. -->
+  <actuator>
+    <motor name="f1_motor" joint="front_joint1" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="f2_motor" joint="front_joint2" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="b1_motor" joint="back_joint1" ctrlrange="-36 36" ctrllimited="true"/>
+    <motor name="b2_motor" joint="back_joint2" ctrlrange="-36 36" ctrllimited="true"/>
+  </actuator>
+</mujoco>
