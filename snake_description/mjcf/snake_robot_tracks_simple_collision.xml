@@ -92,11 +92,11 @@
     <exclude name="exclude_base_back_link" body1="base_link" body2="back_link"/>
     <exclude name="exclude_back_link_track" body1="back_link" body2="back_track"/>
 
-    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.05 0.05 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.05 0.05 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.05 0.05 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.05 0.05 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
-    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.05 0.05 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="base_ground_contact" geom1="floor" geom2="base_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_link_ground_contact" geom1="floor" geom2="front_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="front_track_shell_ground_contact" geom1="floor" geom2="front_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_link_ground_contact" geom1="floor" geom2="back_link_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
+    <pair name="back_track_shell_ground_contact" geom1="floor" geom2="back_track_collision" condim="3" friction="0.0 0.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
 
     <pair name="front_track_ground_1" geom1="floor" geom2="front_track_contact1_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
     <pair name="front_track_ground_2" geom1="floor" geom2="front_track_contact2_geom" condim="3" friction="1.5 1.0 0 0 0" solref="0.01 1" solimp="0.95 0.99 0.001 0.5 2"/>
