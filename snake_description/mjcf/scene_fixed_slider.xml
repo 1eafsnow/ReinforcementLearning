@@ -1,0 +1,18 @@
+<mujoco model="snake_scene_fixed_slider">
+  <compiler angle="radian"/>
+  <option timestep="0.001" gravity="0 0 -9.81"/>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1="0.4 0.6 0.8" rgb2="0 0 0" width="800" height="800"/>
+    <texture name="grid_tex" type="2d" builtin="checker" width="512" height="512" rgb1="0.7 0.7 0.7" rgb2="0.5 0.5 0.5"/>
+    <material name="grid_mat" texture="grid_tex" texrepeat="10 10" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" pos="0 0 5" dir="0 0 -1"/>
+    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" material="grid_mat" friction="0 0 0" condim="1" contype="1" conaffinity="1" group="0"/>
+    <geom name="obstacle1" type="box" pos="-3 0 0" size="0.5 0.5 0.5" rgba="0.792157 0.819608 0.933333 1" friction="1.0 0.005 0.0001" condim="3" contype="1" conaffinity="1" group="0"/>
+  </worldbody>
+
+  <include file="snake_robot_tracks_fixed_slider.xml"/>
+</mujoco>
