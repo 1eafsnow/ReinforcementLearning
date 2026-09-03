@@ -14,5 +14,5 @@
     <geom name="obstacle1" type="box" pos="-3 0 0" size="0.5 0.5 0.5" rgba="0.792157 0.819608 0.933333 1" friction="1.0 0.005 0.0001" condim="3" contype="1" conaffinity="1" group="0"/>
   </worldbody>
 
-  <include file="snake_robot_tracks_fixed_slider.xml"/>
+  <include file="snake_robot_tracks_slider.xml"/>
 </mujoco>

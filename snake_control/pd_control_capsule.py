@@ -15,9 +15,9 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_CANDIDATES = [
-    SCRIPT_DIR.parent / "snake_description" / "mjcf" / "scene.xml",
-    SCRIPT_DIR / "mjcf" / "scene.xml",
-    Path("mjcf/scene.xml"),
+    SCRIPT_DIR.parent / "snake_description" / "mjcf" / "scene_capsule.xml",
+    SCRIPT_DIR / "mjcf" / "scene_capsule.xml",
+    Path("mjcf/scene_capsule.xml"),
 ]
 
 MOTOR_CONFIGS = [
@@ -108,7 +108,7 @@ class SnakeMitController:
             if path.exists():
                 return path.resolve()
         searched = "\n".join(str(path) for path in MODEL_CANDIDATES)
-        raise FileNotFoundError(f"Could not find scene.xml. Searched:\n{searched}")
+        raise FileNotFoundError(f"Could not find scene_capsule.xml. Searched:\n{searched}")
 
     @staticmethod
     def _mujoco_version_at_least(major, minor, patch):

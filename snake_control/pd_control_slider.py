@@ -15,9 +15,9 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_CANDIDATES = [
-    SCRIPT_DIR.parent / "snake_description" / "mjcf" / "scene_fixed_slider.xml",
-    SCRIPT_DIR / "mjcf" / "scene_fixed_slider.xml",
-    Path("mjcf/scene_fixed_slider.xml"),
+    SCRIPT_DIR.parent / "snake_description" / "mjcf" / "scene_slider.xml",
+    SCRIPT_DIR / "mjcf" / "scene_slider.xml",
+    Path("mjcf/scene_slider.xml"),
 ]
 
 CONTROL_CONFIGS = [
@@ -141,7 +141,7 @@ class SnakeFixedSliderController:
             if path.exists():
                 return path.resolve()
         searched = "\n".join(str(path) for path in MODEL_CANDIDATES)
-        raise FileNotFoundError(f"Could not find scene_fixed_slider.xml. Searched:\n{searched}")
+        raise FileNotFoundError(f"Could not find scene_slider.xml. Searched:\n{searched}")
 
     @staticmethod
     def _mujoco_version_at_least(major, minor, patch):
