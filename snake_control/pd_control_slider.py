@@ -32,6 +32,8 @@ CONTROL_CONFIGS = [
 TRACK_EFFECTIVE_RADIUS = 0.075
 TRACK_VIRTUAL_INERTIA = 0.08
 TRACK_MOTOR_DAMPING = 0.20
+TRACK_OFF_DAMPING = 2.0
+TRACK_OFF_STOP_EPS = 0.02
 TRACK_SPEED_LIMIT = 15.0
 
 TRACK_CONFIGS = {
@@ -305,13 +307,15 @@ class SnakeSurfaceVelSliderController:
                 tau_motor = command.kd * (command.dq_des - omega) + command.tau_ff
                 tau_limit = max(0.0, command.tau_limit)
                 tau_motor = float(np.clip(tau_motor, -tau_limit, tau_limit))
+                damping = TRACK_MOTOR_DAMPING
             else:
                 tau_motor = 0.0
+                damping = TRACK_OFF_DAMPING
 
-            net_tau = tau_motor + load_tau - TRACK_MOTOR_DAMPING * omega
+            net_tau = tau_motor + load_tau - damping * omega
             omega += (net_tau / TRACK_VIRTUAL_INERTIA) * dt
             omega = float(np.clip(omega, -TRACK_SPEED_LIMIT, TRACK_SPEED_LIMIT))
-            if not command.enabled and abs(omega) < 1e-5:
+            if not command.enabled and abs(omega) < TRACK_OFF_STOP_EPS:
                 omega = 0.0
 
         angle += omega * dt
@@ -489,7 +493,7 @@ class SnakeControlUi:
 
         tip1 = "Joints: tau = Kp*(q_des-q) + Kd*(dq_des-dq) + tau_ff."
         tip2 = f"Tracks: tau = Kd*(dq_des-dq) + tau_ff, virtual J={TRACK_VIRTUAL_INERTIA:g} kg*m^2, radius={TRACK_EFFECTIVE_RADIUS:.3f} m, speed limit={TRACK_SPEED_LIMIT:g} rad/s."
-        tip3 = "Track surfacevel = radius*dq; MuJoCo computes all pad-ground friction. Positive dq drives the robot toward its front."
+        tip3 = f"Track surfacevel = radius*dq; MuJoCo computes friction. Disable uses damping={TRACK_OFF_DAMPING:g}; Emergency Stop sets surfacevel to zero immediately."
         ttk.Label(main, text=tip1).grid(row=len(CONTROL_CONFIGS) + 4, column=0, columnspan=11, sticky="w", pady=(4, 0))
         ttk.Label(main, text=tip2).grid(row=len(CONTROL_CONFIGS) + 5, column=0, columnspan=11, sticky="w", pady=(2, 0))
         ttk.Label(main, text=tip3).grid(row=len(CONTROL_CONFIGS) + 6, column=0, columnspan=11, sticky="w", pady=(2, 0))
