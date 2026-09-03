@@ -45,7 +45,7 @@ LIDAR_SITE_NAME = "lidar_site"
 LIDAR_ROWS = 4
 LIDAR_COLS = 120
 LIDAR_HFOV_DEG = 120.0
-LIDAR_VFOV_DEG = 90.0
+LIDAR_VFOV_DEG = 45.0
 LIDAR_MAX_RANGE = 30.0
 LIDAR_SCAN_HZ = 10.0
 LIDAR_DEBUG_DRAW_RANGE = 5.0
@@ -562,7 +562,7 @@ class SnakeControlUi:
         self.exit_button = ttk.Button(controls, text="Safe Exit", command=self._safe_exit)
         self.exit_button.grid(row=0, column=6, padx=(18, 0))
 
-        self.lidar_status_var = tk.StringVar(value="LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
+        self.lidar_status_var = tk.StringVar(value="LiDAR: OFF | 4x120 | FOV 120 x 45 deg | max 30 m | 10 Hz")
         ttk.Label(main, textvariable=self.lidar_status_var).grid(row=len(CONTROL_CONFIGS) + 2, column=0, columnspan=11, sticky="w", pady=(10, 0))
 
         self.status_var = tk.StringVar(value=f"Model: {self.controller.model_path}")
@@ -647,7 +647,7 @@ class SnakeControlUi:
             hit_count, center_dist, center_geom = self.controller.get_lidar_debug_state()
             self.lidar_status_var.set(f"LiDAR: ON | min {float(np.min(lidar_scan)):.2f} m | hits {hit_count}/{LIDAR_ROWS * LIDAR_COLS} | center {center_dist:.2f} m -> {center_geom}")
         else:
-            self.lidar_status_var.set("LiDAR: OFF | 4x120 | FOV 120 x 90 deg | max 30 m | 10 Hz")
+            self.lidar_status_var.set("LiDAR: OFF | 4x120 | FOV 120 x 45 deg | max 30 m | 10 Hz")
 
         if not self.closing:
             self.root.after(self.UPDATE_PERIOD_MS, self._refresh_state)
