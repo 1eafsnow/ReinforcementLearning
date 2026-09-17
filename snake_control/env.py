@@ -1,4 +1,5 @@
 from pathlib import Path
+import tempfile
 from typing import Dict, Optional, Tuple
 
 import gymnasium as gym
@@ -27,11 +28,7 @@ def quat_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     return q / norm
 
 
-def wrap_to_pi(angle: float) -> float:
-    return float(np.arctan2(np.sin(angle), np.cos(angle)))
-
-
-class SnakeAvoidEnv(gym.Env):
+class SnakeTraverseEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 50}
 
     def __init__(self, config: EnvConfig = ENV_CONFIG, render_mode: Optional[str] = None):
@@ -51,6 +48,8 @@ class SnakeAvoidEnv(gym.Env):
         self.metadata["render_fps"] = int(round(1.0 / self.policy_dt))
 
         self.base_id = self._require_id(mujoco.mjtObj.mjOBJ_BODY, config.base_name)
+        self.front_track_body_id = self._require_id(mujoco.mjtObj.mjOBJ_BODY, config.front_track_body_name)
+        self.back_track_body_id = self._require_id(mujoco.mjtObj.mjOBJ_BODY, config.back_track_body_name)
         free_joint_id = self._require_id(mujoco.mjtObj.mjOBJ_JOINT, config.free_joint_name)
         self.free_qpos_adr = int(self.model.jnt_qposadr[free_joint_id])
         self.free_dof_adr = int(self.model.jnt_dofadr[free_joint_id])
@@ -63,16 +62,18 @@ class SnakeAvoidEnv(gym.Env):
         self.ctrl_lower = self.model.actuator_ctrlrange[self.actuator_ids, 0].copy()
         self.ctrl_upper = self.model.actuator_ctrlrange[self.actuator_ids, 1].copy()
         self.floor_geom_id = self._require_id(mujoco.mjtObj.mjOBJ_GEOM, config.floor_name)
+        self.obstacle_geom_id = self._require_id(mujoco.mjtObj.mjOBJ_GEOM, config.obstacle_geom_name)
+        self.hfield_id = self._require_id(mujoco.mjtObj.mjOBJ_HFIELD, config.obstacle_hfield_name)
+        self.hfield_adr = int(self.model.hfield_adr[self.hfield_id])
+        self.hfield_nrow = int(self.model.hfield_nrow[self.hfield_id])
+        self.hfield_ncol = int(self.model.hfield_ncol[self.hfield_id])
         self.lidar_site_id = self._require_id(mujoco.mjtObj.mjOBJ_SITE, config.lidar_site_name)
         self.front_track_pad_ids = np.array([self._require_id(mujoco.mjtObj.mjOBJ_GEOM, name) for name in config.front_track_pad_names], dtype=np.int32)
         self.back_track_pad_ids = np.array([self._require_id(mujoco.mjtObj.mjOBJ_GEOM, name) for name in config.back_track_pad_names], dtype=np.int32)
         self.support_geom_ids = np.array([self._require_id(mujoco.mjtObj.mjOBJ_GEOM, name) for name in config.support_geom_names], dtype=np.int32)
-        self.obstacle_geom_ids = self._discover_obstacle_geoms()
-        self.obstacle_geom_set = frozenset(int(value) for value in self.obstacle_geom_ids)
-        self.obstacle_z = self.model.geom_pos[self.obstacle_geom_ids, 2].copy()
 
         self.model.geom_group[self.floor_geom_id] = int(config.floor_lidar_group)
-        self.model.geom_group[self.obstacle_geom_ids] = int(config.lidar_group)
+        self.model.geom_group[self.obstacle_geom_id] = int(config.lidar_group)
         self.model.flg_surfacevel = 1
 
         self.action_dim = 6
@@ -80,9 +81,6 @@ class SnakeAvoidEnv(gym.Env):
         self.kp = np.asarray(config.kp, dtype=np.float64)
         self.kd = np.asarray(config.kd, dtype=np.float64)
         self.joint_action_scale = np.asarray(config.joint_action_scale, dtype=np.float64)
-        if self.q_nominal.shape != (4,) or self.kp.shape != (4,) or self.kd.shape != (4,) or self.joint_action_scale.shape != (4,):
-            raise ValueError("q_nominal, kp, kd and joint_action_scale must each contain four values")
-
         self.track_pad_ids = (self.front_track_pad_ids, self.back_track_pad_ids)
         self.track_omega = np.zeros(2, dtype=np.float64)
         self.track_angle = np.zeros(2, dtype=np.float64)
@@ -103,12 +101,27 @@ class SnakeAvoidEnv(gym.Env):
         self.older_filtered_action = np.zeros(self.action_dim, dtype=np.float64)
         self.goal_position = np.zeros(3, dtype=np.float64)
         self.previous_goal_distance = 0.0
+        self.previous_course_progress = 0.0
         self.episode_progress = 0.0
         self.path_length = 0.0
         self.last_base_xy = np.zeros(2, dtype=np.float64)
         self.step_count = 0
         self._episode_ended = False
-        self.obstacle_offset_limit = max(abs(float(config.obstacle_lateral_offset_range[0])), abs(float(config.obstacle_lateral_offset_range[1])))
+        self.obstacle_height_limit = float(config.obstacle_height_limit)
+        self.obstacle_height = float(config.obstacle_min_height)
+        self.obstacle_ramp_length = 0.0
+        self.obstacle_platform_length = 0.0
+        self.obstacle_start_progress = 0.0
+        self.obstacle_top_start_progress = 0.0
+        self.obstacle_top_end_progress = 0.0
+        self.obstacle_end_progress = 0.0
+        self.course_origin_xy = np.zeros(2, dtype=np.float64)
+        self.course_forward = np.array([-1.0, 0.0], dtype=np.float64)
+        self.course_left = np.array([0.0, -1.0], dtype=np.float64)
+        self.stage_front_track = False
+        self.stage_base = False
+        self.stage_back_track = False
+        self.obstacle_cleared = False
 
         lidar_dim = config.lidar_rows * config.lidar_cols
         self.observation_dim = lidar_dim + 30
@@ -135,7 +148,7 @@ class SnakeAvoidEnv(gym.Env):
     @classmethod
     def _require_surfacevel_support(cls) -> None:
         if cls._version_tuple() < (3, 11, 0):
-            raise RuntimeError(f"SnakeAvoidEnv requires MuJoCo >= 3.11.0 for geom surfacevel; installed version is {mujoco.__version__}")
+            raise RuntimeError(f"SnakeTraverseEnv requires MuJoCo >= 3.11.0; installed version is {mujoco.__version__}")
 
     def _validate_config(self) -> None:
         if self.cfg.frame_skip < 1 or self.cfg.max_episode_steps < 1:
@@ -143,31 +156,15 @@ class SnakeAvoidEnv(gym.Env):
         if len(self.cfg.joint_names) != 4 or len(self.cfg.actuator_names) != 4:
             raise ValueError("Snake slider model requires exactly four joints and four joint actuators")
         if len(self.cfg.front_track_pad_names) != 3 or len(self.cfg.back_track_pad_names) != 3:
-            raise ValueError("Each virtual track requires exactly three fixed surfacevel pads")
-        if not 0.0 < self.cfg.action_filter_alpha <= 1.0:
-            raise ValueError("action_filter_alpha must lie in (0, 1]")
-        if self.cfg.action_rate_limit <= 0.0 or self.cfg.track_effective_radius <= 0.0 or self.cfg.track_virtual_inertia <= 0.0:
-            raise ValueError("Action rate and virtual track parameters must be positive")
-        if self.cfg.lidar_rows < 1 or self.cfg.lidar_cols < 4 or self.cfg.lidar_scan_hz <= 0.0 or self.cfg.lidar_max_range <= 0.0:
-            raise ValueError("LiDAR rows/rate/range must be positive and lidar_cols must be at least four")
-        if not 0 <= self.cfg.lidar_group < 6 or not 0 <= self.cfg.floor_lidar_group < 6:
-            raise ValueError("MuJoCo geom groups must be in [0, 5]")
-        self._validate_range(self.cfg.goal_distance_range, "goal_distance_range")
-        self._validate_range(self.cfg.goal_lateral_range, "goal_lateral_range")
-        self._validate_range(self.cfg.obstacle_path_fraction_range, "obstacle_path_fraction_range")
-        self._validate_range(self.cfg.obstacle_lateral_offset_range, "obstacle_lateral_offset_range")
-        rcfg = self.reward_cfg
-        if not 0.0 < rcfg.avoid_full_distance < rcfg.avoid_start_distance <= self.cfg.lidar_max_range:
-            raise ValueError("avoid distances must satisfy 0 < avoid_full_distance < avoid_start_distance <= lidar_max_range")
-        if not 0.0 < rcfg.avoid_front_fraction < 1.0:
-            raise ValueError("avoid_front_fraction must lie in (0, 1)")
-        if rcfg.avoid_side_difference_scale <= 0.0 or rcfg.avoid_turn_rate_scale <= 0.0:
-            raise ValueError("avoidance normalization scales must be positive")
-        relaxations = (rcfg.avoid_heading_relaxation, rcfg.avoid_speed_relaxation, rcfg.avoid_negative_progress_relaxation)
-        if any(value < 0.0 or value > 1.0 for value in relaxations):
-            raise ValueError("avoidance relaxation values must lie in [0, 1]")
-        if rcfg.avoid_symmetry_turn_bonus < 0.0:
-            raise ValueError("avoid_symmetry_turn_bonus must be non-negative")
+            raise ValueError("Each virtual track requires exactly three surfacevel pads")
+        if self.cfg.hfield_rows < 2 or self.cfg.hfield_cols < 4:
+            raise ValueError("Heightfield resolution is too small")
+        if self.cfg.obstacle_min_height <= 0.0 or self.cfg.obstacle_height_limit > self.cfg.obstacle_max_supported_height:
+            raise ValueError("Obstacle height range is invalid")
+        if self.cfg.hfield_base_z >= 0.0:
+            raise ValueError("hfield_base_z must be negative so unused terrain stays below the floor")
+        for value, name in ((self.cfg.obstacle_distance_range, "obstacle_distance_range"), (self.cfg.obstacle_ramp_length_range, "obstacle_ramp_length_range"), (self.cfg.obstacle_platform_length_range, "obstacle_platform_length_range"), (self.cfg.goal_after_obstacle_range, "goal_after_obstacle_range"), (self.cfg.goal_lateral_range, "goal_lateral_range")):
+            self._validate_range(value, name)
 
     @staticmethod
     def _validate_range(value: Tuple[float, float], name: str) -> Tuple[float, float]:
@@ -176,12 +173,25 @@ class SnakeAvoidEnv(gym.Env):
             raise ValueError(f"{name} must be a finite (low, high) pair")
         return float(array[0]), float(array[1])
 
-    @staticmethod
-    def _load_model(xml_path: Path) -> mujoco.MjModel:
+    def _load_model(self, xml_path: Path) -> mujoco.MjModel:
         xml_path = Path(xml_path).resolve()
         if not xml_path.is_file():
             raise FileNotFoundError(xml_path)
-        model = mujoco.MjModel.from_xml_path(str(xml_path))
+        xml = xml_path.read_text(encoding="utf-8")
+        elevation_z = -self.cfg.hfield_base_z + self.cfg.obstacle_max_supported_height
+        hfield_xml = f'\n    <hfield name="{self.cfg.obstacle_hfield_name}" nrow="{self.cfg.hfield_rows}" ncol="{self.cfg.hfield_cols}" size="{self.cfg.hfield_radius_x} {self.cfg.hfield_radius_y} {elevation_z} {self.cfg.hfield_base_depth}"/>\n'
+        obstacle_xml = f'\n    <geom name="{self.cfg.obstacle_geom_name}" type="hfield" hfield="{self.cfg.obstacle_hfield_name}" pos="{self.cfg.hfield_center_x} {self.cfg.hfield_center_y} {self.cfg.hfield_base_z}" rgba="0.72 0.75 0.86 1" friction="1.3 0.005 0.0001" condim="3" contype="3" conaffinity="3" group="{self.cfg.lidar_group}"/>\n'
+        if "</asset>" not in xml or "</worldbody>" not in xml:
+            raise RuntimeError("scene_slider.xml must contain asset and worldbody sections")
+        xml = xml.replace("</asset>", hfield_xml + "  </asset>", 1)
+        xml = xml.replace("</worldbody>", obstacle_xml + "  </worldbody>", 1)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", prefix=".snake_training_", dir=xml_path.parent, encoding="utf-8", delete=False) as file:
+            file.write(xml)
+            generated_path = Path(file.name)
+        try:
+            model = mujoco.MjModel.from_xml_path(str(generated_path))
+        finally:
+            generated_path.unlink(missing_ok=True)
         model.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
         model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
         model.opt.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
@@ -193,16 +203,6 @@ class SnakeAvoidEnv(gym.Env):
             raise RuntimeError(f"MuJoCo object not found: {name}")
         return object_id
 
-    def _discover_obstacle_geoms(self) -> np.ndarray:
-        ids = []
-        for geom_id in range(self.model.ngeom):
-            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
-            if name is not None and name.startswith(self.cfg.obstacle_prefix):
-                ids.append(geom_id)
-        if not ids:
-            raise RuntimeError(f"No obstacle geoms beginning with '{self.cfg.obstacle_prefix}' were found in {self.cfg.xml_path}")
-        return np.asarray(ids, dtype=np.int32)
-
     def _build_lidar_directions(self) -> np.ndarray:
         h_step = np.deg2rad(self.cfg.lidar_hfov_deg / self.cfg.lidar_cols)
         v_step = np.deg2rad(self.cfg.lidar_vfov_deg / self.cfg.lidar_rows)
@@ -212,10 +212,10 @@ class SnakeAvoidEnv(gym.Env):
         directions = np.stack((np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)), axis=-1)
         return np.ascontiguousarray(directions.reshape(-1, 3), dtype=np.float64)
 
-    def set_obstacle_offset_limit(self, max_abs_offset: float) -> None:
-        if not np.isfinite(max_abs_offset) or max_abs_offset < 0.0:
-            raise ValueError("max_abs_offset must be finite and non-negative")
-        self.obstacle_offset_limit = float(max_abs_offset)
+    def set_obstacle_height_limit(self, max_height: float) -> None:
+        if not np.isfinite(max_height):
+            raise ValueError("max_height must be finite")
+        self.obstacle_height_limit = float(np.clip(max_height, self.cfg.obstacle_min_height, self.cfg.obstacle_max_supported_height))
 
     def _get_heading_yaw(self) -> float:
         rotation = self.data.xmat[self.base_id].reshape(3, 3)
@@ -241,22 +241,18 @@ class SnakeAvoidEnv(gym.Env):
         heading_error = float(np.arctan2(goal_local[1], goal_local[0])) if goal_distance > 1e-9 else 0.0
         return goal_local, goal_distance, heading_error
 
+    def _course_progress(self, xy: np.ndarray) -> float:
+        return float(np.dot(np.asarray(xy, dtype=np.float64) - self.course_origin_xy, self.course_forward))
+
+    def _course_lateral(self, xy: np.ndarray) -> float:
+        return float(np.dot(np.asarray(xy, dtype=np.float64) - self.course_origin_xy, self.course_left))
+
     def _get_robot_state(self) -> Dict[str, np.ndarray]:
         base_rotation = self.data.xmat[self.base_id].reshape(3, 3)
         base_ang_vel, base_lin_vel = self._get_base_velocity()
         goal_local, goal_distance, heading_error = self._get_goal_state()
-        return {
-            "base_pos": self.data.xpos[self.base_id].copy(),
-            "projected_gravity": base_rotation.T @ np.array([0.0, 0.0, -1.0], dtype=np.float64),
-            "base_ang_vel": base_ang_vel,
-            "base_lin_vel": base_lin_vel,
-            "q": self.data.qpos[self.joint_qpos_adr].copy(),
-            "dq": self.data.qvel[self.joint_dof_adr].copy(),
-            "goal_local": goal_local,
-            "goal_distance": np.array(goal_distance),
-            "heading_error": np.array(heading_error),
-            "track_omega": self.track_omega.copy(),
-        }
+        base_xy = self.data.xpos[self.base_id, :2]
+        return {"base_pos": self.data.xpos[self.base_id].copy(), "projected_gravity": base_rotation.T @ np.array([0.0, 0.0, -1.0], dtype=np.float64), "base_ang_vel": base_ang_vel, "base_lin_vel": base_lin_vel, "q": self.data.qpos[self.joint_qpos_adr].copy(), "dq": self.data.qvel[self.joint_dof_adr].copy(), "goal_local": goal_local, "goal_distance": np.array(goal_distance), "heading_error": np.array(heading_error), "track_omega": self.track_omega.copy(), "course_progress": np.array(self._course_progress(base_xy)), "course_lateral": np.array(self._course_lateral(base_xy))}
 
     def _scan_lidar(self) -> None:
         origin = self.data.site_xpos[self.lidar_site_id].copy()
@@ -274,41 +270,10 @@ class SnakeAvoidEnv(gym.Env):
         if force or self.step_count % self.lidar_interval_steps == 0:
             self._scan_lidar()
 
-    def _get_lidar_avoidance_state(self) -> Dict[str, float]:
-        cols = int(self.cfg.lidar_cols)
-        front_width = max(2, int(round(cols * self.reward_cfg.avoid_front_fraction)))
-        front_width = min(front_width, cols - 2)
-        center = cols // 2
-        front_start = max(1, center - front_width // 2)
-        front_end = min(cols - 1, front_start + front_width)
-        right_scan = self.lidar_scan[:, :front_start]
-        front_scan = self.lidar_scan[:, front_start:front_end]
-        left_scan = self.lidar_scan[:, front_end:]
-        front_clearance = float(np.min(front_scan))
-        left_clearance = float(np.min(left_scan))
-        right_clearance = float(np.min(right_scan))
-        denom = self.reward_cfg.avoid_start_distance - self.reward_cfg.avoid_full_distance
-        avoid_gate = float(np.clip((self.reward_cfg.avoid_start_distance - front_clearance) / denom, 0.0, 1.0))
-        side_delta = left_clearance - right_clearance
-        side_preference = float(np.tanh(side_delta / self.reward_cfg.avoid_side_difference_scale))
-        return {"front_clearance": front_clearance, "left_clearance": left_clearance, "right_clearance": right_clearance, "avoid_gate": avoid_gate, "side_preference": side_preference}
-
     def _get_obs(self, state: Optional[Dict[str, np.ndarray]] = None) -> np.ndarray:
         state = self._get_robot_state() if state is None else state
         heading_error = float(state["heading_error"])
-        obs = np.concatenate([
-            self.lidar_scan.reshape(-1).astype(np.float64) / self.cfg.lidar_max_range,
-            state["projected_gravity"],
-            state["base_ang_vel"] / self.cfg.angular_velocity_scale,
-            state["base_lin_vel"] / self.cfg.linear_velocity_scale,
-            state["goal_local"] / self.cfg.goal_position_scale,
-            np.array([float(state["goal_distance"]) / self.cfg.goal_position_scale]),
-            np.array([np.sin(heading_error), np.cos(heading_error)]),
-            (state["q"] - self.q_nominal) / np.maximum(self.joint_action_scale, 0.20),
-            state["dq"] / self.cfg.joint_velocity_scale,
-            state["track_omega"] / self.cfg.track_speed_limit,
-            self.filtered_action,
-        ])
+        obs = np.concatenate([self.lidar_scan.reshape(-1).astype(np.float64) / self.cfg.lidar_max_range, state["projected_gravity"], state["base_ang_vel"] / self.cfg.angular_velocity_scale, state["base_lin_vel"] / self.cfg.linear_velocity_scale, state["goal_local"] / self.cfg.goal_position_scale, np.array([float(state["goal_distance"]) / self.cfg.goal_position_scale]), np.array([np.sin(heading_error), np.cos(heading_error)]), (state["q"] - self.q_nominal) / np.maximum(self.joint_action_scale, 0.20), state["dq"] / self.cfg.joint_velocity_scale, state["track_omega"] / self.cfg.track_speed_limit, self.filtered_action])
         if obs.shape != (self.observation_dim,) or not np.isfinite(obs).all():
             raise FloatingPointError(f"Observation is invalid: expected {self.observation_dim}, got {obs.shape}")
         return np.clip(obs, -10.0, 10.0).astype(np.float32)
@@ -327,12 +292,13 @@ class SnakeAvoidEnv(gym.Env):
         pad_ids = frozenset(int(value) for value in self.track_pad_ids[track_index])
         contact_force = np.zeros(6, dtype=np.float64)
         total_surface_force = 0.0
+        allowed_surfaces = (self.floor_geom_id, self.obstacle_geom_id)
         for contact_index in range(self.data.ncon):
             contact = self.data.contact[contact_index]
             g1, g2 = int(contact.geom1), int(contact.geom2)
-            if g1 == self.floor_geom_id and g2 in pad_ids:
+            if g1 in allowed_surfaces and g2 in pad_ids:
                 pad_id, sign = g2, 1.0
-            elif g2 == self.floor_geom_id and g1 in pad_ids:
+            elif g2 in allowed_surfaces and g1 in pad_ids:
                 pad_id, sign = g1, -1.0
             else:
                 continue
@@ -368,26 +334,6 @@ class SnakeAvoidEnv(gym.Env):
         arrays = (self.data.qpos, self.data.qvel, self.data.qacc, self.data.ctrl, self.track_omega, self.track_angle)
         return bool(all(np.isfinite(array).all() for array in arrays))
 
-    def _get_obstacle_collision(self) -> Tuple[bool, Tuple[str, ...]]:
-        names = set()
-        contact_force = np.zeros(6, dtype=np.float64)
-        for contact_index in range(self.data.ncon):
-            contact = self.data.contact[contact_index]
-            g1, g2 = int(contact.geom1), int(contact.geom2)
-            obstacle_id = g1 if g1 in self.obstacle_geom_set else g2 if g2 in self.obstacle_geom_set else -1
-            if obstacle_id < 0:
-                continue
-            other = g2 if obstacle_id == g1 else g1
-            if other in self.obstacle_geom_set or int(contact.efc_address) < 0:
-                continue
-            mujoco.mj_contactForce(self.model, self.data, contact_index, contact_force)
-            if abs(float(contact_force[0])) < self.cfg.collision_force_threshold:
-                continue
-            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, obstacle_id)
-            names.add(name if name is not None else f"obstacle_geom_{obstacle_id}")
-        result = tuple(sorted(names))
-        return bool(result), result
-
     def _align_support_with_ground(self) -> None:
         mujoco.mj_forward(self.model, self.data)
         lowest = np.inf
@@ -403,117 +349,105 @@ class SnakeAvoidEnv(gym.Env):
         self.data.qpos[self.free_qpos_adr + 2] += self.cfg.initial_ground_clearance - lowest
         mujoco.mj_forward(self.model, self.data)
 
-    def _sample_goal_and_obstacles(self) -> None:
-        start = self.data.xpos[self.base_id, :2].copy()
-        yaw = self._get_heading_yaw()
-        forward = np.array([np.cos(yaw), np.sin(yaw)], dtype=np.float64)
-        left = np.array([-np.sin(yaw), np.cos(yaw)], dtype=np.float64)
-        goal_distance = float(self.np_random.uniform(*self.cfg.goal_distance_range))
-        goal_lateral = float(self.np_random.uniform(*self.cfg.goal_lateral_range))
-        goal_xy = start + forward * goal_distance + left * goal_lateral
-        goal_xy = np.clip(goal_xy, -self.cfg.world_xy_limit + 0.25, self.cfg.world_xy_limit - 0.25)
-        self.goal_position[:] = (goal_xy[0], goal_xy[1], 0.08)
+    def _write_trapezoid_hfield(self, height: float, start_progress: float, ramp_length: float, platform_length: float) -> None:
+        elevation_z = float(self.model.hfield_size[self.hfield_id, 2])
+        x_world = self.cfg.hfield_center_x + np.linspace(-self.cfg.hfield_radius_x, self.cfg.hfield_radius_x, self.hfield_ncol)
+        progress = self.course_origin_xy[0] - x_world
+        end_up = start_progress + ramp_length
+        end_top = end_up + platform_length
+        end_down = end_top + ramp_length
+        physical_height = np.zeros(self.hfield_ncol, dtype=np.float64)
+        inside_up = (progress >= start_progress) & (progress < end_up)
+        inside_top = (progress >= end_up) & (progress <= end_top)
+        inside_down = (progress > end_top) & (progress <= end_down)
+        physical_height[inside_up] = height * (progress[inside_up] - start_progress) / ramp_length
+        physical_height[inside_top] = height
+        physical_height[inside_down] = height * (end_down - progress[inside_down]) / ramp_length
+        active = inside_up | inside_top | inside_down
+        normalized = np.zeros(self.hfield_ncol, dtype=np.float64)
+        normalized[active] = (physical_height[active] - self.cfg.hfield_base_z) / elevation_z
+        np.clip(normalized, 0.0, 1.0, out=normalized)
+        count = self.hfield_nrow * self.hfield_ncol
+        hfield = self.model.hfield_data[self.hfield_adr:self.hfield_adr + count].reshape(self.hfield_nrow, self.hfield_ncol)
+        hfield[:] = normalized[None, :]
+        if self.viewer is not None and self.viewer.is_running():
+            self.viewer.update_hfield(self.hfield_id)
 
-        segment = goal_xy - start
-        segment_length = float(np.linalg.norm(segment))
-        if segment_length < 1e-6:
-            raise RuntimeError("Sampled goal is too close to the robot")
-        direction = segment / segment_length
-        perpendicular = np.array([-direction[1], direction[0]], dtype=np.float64)
-        fraction_low, fraction_high = self.cfg.obstacle_path_fraction_range
-        obstacle_count = len(self.obstacle_geom_ids)
-        base_fractions = np.linspace(fraction_low, fraction_high, obstacle_count) if obstacle_count > 1 else np.array([self.np_random.uniform(fraction_low, fraction_high)])
-        for index, geom_id in enumerate(self.obstacle_geom_ids):
-            fraction = float(np.clip(base_fractions[index] + self.np_random.uniform(-0.04, 0.04), fraction_low, fraction_high)) if obstacle_count > 1 else float(base_fractions[index])
-            along = float(np.clip(segment_length * fraction, self.cfg.obstacle_start_clearance, max(self.cfg.obstacle_start_clearance, segment_length - self.cfg.obstacle_goal_clearance)))
-            lateral = float(self.np_random.uniform(-self.obstacle_offset_limit, self.obstacle_offset_limit))
-            obstacle_xy = start + direction * along + perpendicular * lateral
-            self.model.geom_pos[int(geom_id), 0] = obstacle_xy[0]
-            self.model.geom_pos[int(geom_id), 1] = obstacle_xy[1]
-            self.model.geom_pos[int(geom_id), 2] = self.obstacle_z[index]
+    def _generate_course(self, options: Dict[str, object]) -> None:
+        self.course_origin_xy = self.data.xpos[self.base_id, :2].copy()
+        self.course_forward[:] = (-1.0, 0.0)
+        self.course_left[:] = (0.0, -1.0)
+        requested_height = options.get("obstacle_height")
+        if requested_height is None:
+            low = self.cfg.obstacle_min_height
+            high = max(low, self.obstacle_height_limit)
+            self.obstacle_height = float(self.np_random.uniform(low, high))
+        else:
+            self.obstacle_height = float(np.clip(float(requested_height), self.cfg.obstacle_min_height, self.cfg.obstacle_max_supported_height))
+        self.obstacle_ramp_length = float(self.np_random.uniform(*self.cfg.obstacle_ramp_length_range))
+        self.obstacle_platform_length = float(self.np_random.uniform(*self.cfg.obstacle_platform_length_range))
+        self.obstacle_start_progress = float(self.np_random.uniform(*self.cfg.obstacle_distance_range))
+        self.obstacle_top_start_progress = self.obstacle_start_progress + self.obstacle_ramp_length
+        self.obstacle_top_end_progress = self.obstacle_top_start_progress + self.obstacle_platform_length
+        self.obstacle_end_progress = self.obstacle_top_end_progress + self.obstacle_ramp_length
+        self._write_trapezoid_hfield(self.obstacle_height, self.obstacle_start_progress, self.obstacle_ramp_length, self.obstacle_platform_length)
+        goal_after = float(self.np_random.uniform(*self.cfg.goal_after_obstacle_range))
+        goal_lateral = float(self.np_random.uniform(*self.cfg.goal_lateral_range))
+        goal_progress = self.obstacle_end_progress + goal_after
+        self.goal_position[:] = (self.course_origin_xy[0] - goal_progress, self.course_origin_xy[1] - goal_lateral, 0.08)
         mujoco.mj_forward(self.model, self.data)
 
-    def _compute_reward(self, state: Dict[str, np.ndarray], collision: bool, success: bool, mean_joint_torque_sq: float, mean_track_torque_sq: float, old_filtered_action: np.ndarray, older_filtered_action: np.ndarray) -> Tuple[float, Dict[str, float]]:
+    def _update_stage_flags(self) -> Dict[str, float]:
+        rewards = {"front_stage": 0.0, "base_stage": 0.0, "rear_stage": 0.0, "clear_stage": 0.0}
+        front_progress = self._course_progress(self.data.xpos[self.front_track_body_id, :2])
+        base_progress = self._course_progress(self.data.xpos[self.base_id, :2])
+        rear_progress = self._course_progress(self.data.xpos[self.back_track_body_id, :2])
+        if not self.stage_front_track and front_progress >= self.obstacle_top_start_progress:
+            self.stage_front_track = True
+            rewards["front_stage"] = self.reward_cfg.front_track_stage_reward
+        if not self.stage_base and base_progress >= self.obstacle_top_start_progress:
+            self.stage_base = True
+            rewards["base_stage"] = self.reward_cfg.base_stage_reward
+        if not self.stage_back_track and rear_progress >= self.obstacle_top_start_progress:
+            self.stage_back_track = True
+            rewards["rear_stage"] = self.reward_cfg.rear_track_stage_reward
+        if not self.obstacle_cleared and rear_progress >= self.obstacle_end_progress + self.cfg.obstacle_clear_margin:
+            self.obstacle_cleared = True
+            rewards["clear_stage"] = self.reward_cfg.obstacle_clear_reward
+        return rewards
+
+    def _get_obstacle_contact_count(self) -> int:
+        count = 0
+        for contact_index in range(self.data.ncon):
+            contact = self.data.contact[contact_index]
+            if int(contact.geom1) == self.obstacle_geom_id or int(contact.geom2) == self.obstacle_geom_id:
+                count += 1
+        return count
+
+    def _compute_reward(self, state: Dict[str, np.ndarray], stage_rewards: Dict[str, float], mean_joint_torque_sq: float, mean_track_torque_sq: float, old_filtered_action: np.ndarray, older_filtered_action: np.ndarray) -> Tuple[float, Dict[str, float]]:
         cfg = self.reward_cfg
-        avoid = self._get_lidar_avoidance_state()
-        avoid_gate = avoid["avoid_gate"]
-
-        goal_distance = float(state["goal_distance"])
-        progress = float(np.clip(self.previous_goal_distance - goal_distance, -0.12, 0.12))
-        negative_progress_scale = 1.0 - cfg.avoid_negative_progress_relaxation * avoid_gate
-        shaped_progress = progress if progress >= 0.0 else progress * negative_progress_scale
-
+        course_progress = float(state["course_progress"])
+        progress_delta = float(np.clip(course_progress - self.previous_course_progress, -0.12, 0.12))
         heading_error = float(state["heading_error"])
-        raw_heading_reward = 0.5 * (np.cos(heading_error) + 1.0)
-        heading_scale = 1.0 - cfg.avoid_heading_relaxation * avoid_gate
-        heading_reward = float(raw_heading_reward * heading_scale)
-
-        goal_local = state["goal_local"]
-        goal_norm = max(float(np.linalg.norm(goal_local)), 1e-6)
-        speed_toward_goal = float(np.dot(state["base_lin_vel"][:2], goal_local / goal_norm))
-        raw_speed_reward = float(np.clip(speed_toward_goal, -1.0, 1.0))
-        speed_scale = 1.0 - cfg.avoid_speed_relaxation * avoid_gate
-        speed_reward = raw_speed_reward * speed_scale
-
-        yaw_rate_normalized = float(np.clip(state["base_ang_vel"][2] / cfg.avoid_turn_rate_scale, -1.0, 1.0))
-        side_preference = avoid["side_preference"]
-        directed_turn_reward = side_preference * yaw_rate_normalized
-        symmetry_turn_reward = cfg.avoid_symmetry_turn_bonus * (1.0 - abs(side_preference)) * abs(yaw_rate_normalized)
-        avoid_turn_reward = float(avoid_gate * (directed_turn_reward + symmetry_turn_reward))
-
-        lidar_min = float(np.min(self.lidar_scan))
-        clearance_penalty = float(max(cfg.clearance_distance - lidar_min, 0.0) / cfg.clearance_distance) ** 2
-        stall_penalty = float(goal_distance > self.cfg.goal_radius and abs(progress) < 5e-4 and abs(speed_toward_goal) < 0.03)
-        blocked_stall_penalty = avoid_gate * stall_penalty
+        heading_reward = 0.5 * (np.cos(heading_error) + 1.0)
+        forward_speed = float(np.clip(state["base_lin_vel"][0], -1.0, 1.0))
+        reverse_penalty = max(-progress_delta, 0.0)
+        stall_penalty = float(abs(progress_delta) < 4e-4 and abs(forward_speed) < 0.03)
+        lateral_penalty = float(max(abs(float(state["course_lateral"])) - 0.10, 0.0) ** 2)
         action_rate_penalty = float(np.mean((self.filtered_action - old_filtered_action) ** 2))
         action_acceleration_penalty = float(np.mean((self.filtered_action - 2.0 * old_filtered_action + older_filtered_action) ** 2))
         joint_pose_penalty = float(np.mean(((state["q"] - self.q_nominal) / np.maximum(self.joint_action_scale, 0.20)) ** 2))
         joint_velocity_penalty = float(np.mean((state["dq"] / self.cfg.joint_velocity_scale) ** 2))
         joint_torque_penalty = float(mean_joint_torque_sq / max(float(np.mean(self.ctrl_upper ** 2)), 1e-6))
         track_torque_penalty = float(mean_track_torque_sq / max(self.cfg.track_torque_limit ** 2, 1e-6))
-
-        reward = (
-            cfg.progress_weight * shaped_progress
-            + cfg.heading_weight * heading_reward
-            + cfg.speed_toward_goal_weight * speed_reward
-            + cfg.avoid_turn_weight * avoid_turn_reward
-            - cfg.clearance_weight * clearance_penalty
-            - cfg.stall_weight * stall_penalty
-            - cfg.blocked_stall_weight * blocked_stall_penalty
-            - cfg.action_rate_weight * action_rate_penalty
-            - cfg.action_acceleration_weight * action_acceleration_penalty
-            - cfg.joint_pose_weight * joint_pose_penalty
-            - cfg.joint_velocity_weight * joint_velocity_penalty
-            - cfg.joint_torque_weight * joint_torque_penalty
-            - cfg.track_torque_weight * track_torque_penalty
-            - cfg.time_penalty
-        )
-        if success:
-            reward += cfg.success_reward
-        if collision:
-            reward -= cfg.collision_penalty
-
-        terms = {
-            "total": float(reward), "progress": progress, "shaped_progress": float(shaped_progress),
-            "heading": heading_reward, "speed_toward_goal": speed_toward_goal, "speed_reward": float(speed_reward),
-            "avoid_turn_reward": avoid_turn_reward, "avoid_gate": avoid_gate,
-            "front_clearance": avoid["front_clearance"], "left_clearance": avoid["left_clearance"], "right_clearance": avoid["right_clearance"],
-            "side_preference": side_preference, "yaw_rate_normalized": yaw_rate_normalized,
-            "clearance_penalty": clearance_penalty, "stall_penalty": stall_penalty, "blocked_stall_penalty": blocked_stall_penalty,
-            "action_rate_penalty": action_rate_penalty, "action_acceleration_penalty": action_acceleration_penalty,
-            "joint_pose_penalty": joint_pose_penalty, "joint_velocity_penalty": joint_velocity_penalty,
-            "joint_torque_penalty": joint_torque_penalty, "track_torque_penalty": track_torque_penalty,
-            "lidar_min": lidar_min, "goal_distance": goal_distance, "heading_error": heading_error,
-            "success": float(success), "collision": float(collision),
-        }
+        reward = cfg.progress_weight * progress_delta + cfg.heading_weight * heading_reward + cfg.forward_speed_weight * forward_speed + stage_rewards["front_stage"] + stage_rewards["base_stage"] + stage_rewards["rear_stage"] + stage_rewards["clear_stage"] - cfg.stall_weight * stall_penalty - cfg.reverse_weight * reverse_penalty - cfg.lateral_drift_weight * lateral_penalty - cfg.action_rate_weight * action_rate_penalty - cfg.action_acceleration_weight * action_acceleration_penalty - cfg.joint_pose_weight * joint_pose_penalty - cfg.joint_velocity_weight * joint_velocity_penalty - cfg.joint_torque_weight * joint_torque_penalty - cfg.track_torque_weight * track_torque_penalty - cfg.time_penalty
+        terms = {"total": float(reward), "progress": progress_delta, "heading": float(heading_reward), "forward_speed": forward_speed, "front_stage_reward": stage_rewards["front_stage"], "base_stage_reward": stage_rewards["base_stage"], "rear_stage_reward": stage_rewards["rear_stage"], "clear_stage_reward": stage_rewards["clear_stage"], "stall_penalty": stall_penalty, "reverse_penalty": reverse_penalty, "lateral_penalty": lateral_penalty, "action_rate_penalty": action_rate_penalty, "action_acceleration_penalty": action_acceleration_penalty, "joint_pose_penalty": joint_pose_penalty, "joint_velocity_penalty": joint_velocity_penalty, "joint_torque_penalty": joint_torque_penalty, "track_torque_penalty": track_torque_penalty, "goal_distance": float(state["goal_distance"]), "obstacle_height": self.obstacle_height, "obstacle_contact_count": float(self._get_obstacle_contact_count())}
         return float(reward), terms
 
-    def _check_termination(self, state: Dict[str, np.ndarray], collision: bool) -> Tuple[bool, bool, str]:
+    def _check_termination(self, state: Dict[str, np.ndarray]) -> Tuple[bool, bool, str]:
         goal_distance = float(state["goal_distance"])
-        if goal_distance <= self.cfg.goal_radius:
-            return True, True, "goal_reached"
-        if collision:
-            return True, False, "obstacle_collision"
+        if self.obstacle_cleared and goal_distance <= self.cfg.goal_radius:
+            return True, True, "goal_reached_after_obstacle"
         base_z = float(state["base_pos"][2])
         if base_z < self.cfg.min_base_height:
             return True, False, "base_too_low"
@@ -523,6 +457,8 @@ class SnakeAvoidEnv(gym.Env):
             return True, False, "excessive_tilt"
         if np.any(np.abs(state["base_pos"][:2]) > self.cfg.world_xy_limit):
             return True, False, "out_of_bounds"
+        if abs(float(state["course_lateral"])) > self.cfg.max_lateral_deviation:
+            return True, False, "left_training_lane"
         return False, False, ""
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -543,14 +479,13 @@ class SnakeAvoidEnv(gym.Env):
             self.data.qpos[qadr + 3:qadr + 7] = quat_multiply(euler_to_quat(0.0, 0.0, yaw_noise), self.data.qpos[qadr + 3:qadr + 7].copy())
             self.data.qvel[dadr:dadr + 3] = self.np_random.uniform(-self.cfg.base_linear_velocity_noise, self.cfg.base_linear_velocity_noise, 3)
             self.data.qvel[dadr + 3:dadr + 6] = self.np_random.uniform(-self.cfg.base_angular_velocity_noise, self.cfg.base_angular_velocity_noise, 3)
-
         self.track_omega.fill(0.0)
         self.track_angle.fill(0.0)
         self.track_load_tau.fill(0.0)
         self.track_motor_tau.fill(0.0)
         self._set_all_track_surfacevel(0.0)
         self._align_support_with_ground()
-        self._sample_goal_and_obstacles()
+        self._generate_course(options)
         self.filtered_action.fill(0.0)
         self.previous_filtered_action.fill(0.0)
         self.older_filtered_action.fill(0.0)
@@ -559,30 +494,22 @@ class SnakeAvoidEnv(gym.Env):
         self.episode_progress = 0.0
         self.path_length = 0.0
         self.last_base_xy = self.data.xpos[self.base_id, :2].copy()
+        self.stage_front_track = False
+        self.stage_base = False
+        self.stage_back_track = False
+        self.obstacle_cleared = False
         state = self._get_robot_state()
         self.previous_goal_distance = float(state["goal_distance"])
+        self.previous_course_progress = float(state["course_progress"])
         self._maybe_scan_lidar(force=True)
         obs = self._get_obs(state)
         self._last_valid_obs = obs.copy()
-        info = self._make_info(state, {}, "", (), np.zeros(4), np.zeros(2), self.q_nominal.copy(), np.full(2, self.cfg.track_speed_center))
+        info = self._make_info(state, {}, "", np.zeros(4), np.zeros(2), self.q_nominal.copy(), np.full(2, self.cfg.track_speed_center))
         self.render()
         return obs, info
 
-    def _make_info(self, state: Dict[str, np.ndarray], reward_terms: Dict[str, float], termination_reason: str, collision_names: Tuple[str, ...], joint_torque: np.ndarray, track_torque: np.ndarray, q_des: np.ndarray, track_target: np.ndarray) -> Dict[str, object]:
-        avoid = self._get_lidar_avoidance_state()
-        return {
-            "reward_terms": reward_terms, "termination_reason": termination_reason,
-            "base_position": state["base_pos"].copy(), "base_linear_velocity": state["base_lin_vel"].copy(), "base_angular_velocity": state["base_ang_vel"].copy(),
-            "goal_position": self.goal_position.copy(), "goal_local": state["goal_local"].copy(), "goal_distance": float(state["goal_distance"]),
-            "heading_error": float(state["heading_error"]), "lidar_min": float(np.min(self.lidar_scan)),
-            "front_clearance": avoid["front_clearance"], "left_clearance": avoid["left_clearance"], "right_clearance": avoid["right_clearance"],
-            "avoid_gate": avoid["avoid_gate"], "side_preference": avoid["side_preference"],
-            "collision_geoms": collision_names, "success": bool(termination_reason == "goal_reached"), "collision": bool(termination_reason == "obstacle_collision"),
-            "episode_progress": float(self.episode_progress), "path_length": float(self.path_length),
-            "joint_torque": joint_torque.copy(), "track_torque": track_torque.copy(), "q_des": q_des.copy(),
-            "track_target_omega": track_target.copy(), "track_omega": self.track_omega.copy(), "filtered_action": self.filtered_action.copy(),
-            "obstacle_positions": self.model.geom_pos[self.obstacle_geom_ids, :3].copy(),
-        }
+    def _make_info(self, state: Dict[str, np.ndarray], reward_terms: Dict[str, float], termination_reason: str, joint_torque: np.ndarray, track_torque: np.ndarray, q_des: np.ndarray, track_target: np.ndarray) -> Dict[str, object]:
+        return {"reward_terms": reward_terms, "termination_reason": termination_reason, "base_position": state["base_pos"].copy(), "base_linear_velocity": state["base_lin_vel"].copy(), "base_angular_velocity": state["base_ang_vel"].copy(), "goal_position": self.goal_position.copy(), "goal_local": state["goal_local"].copy(), "goal_distance": float(state["goal_distance"]), "heading_error": float(state["heading_error"]), "lidar_min": float(np.min(self.lidar_scan)), "success": bool(termination_reason == "goal_reached_after_obstacle"), "episode_progress": float(self.episode_progress), "path_length": float(self.path_length), "course_progress": float(state["course_progress"]), "course_lateral": float(state["course_lateral"]), "obstacle_height": self.obstacle_height, "obstacle_ramp_length": self.obstacle_ramp_length, "obstacle_platform_length": self.obstacle_platform_length, "obstacle_start_progress": self.obstacle_start_progress, "obstacle_end_progress": self.obstacle_end_progress, "front_track_stage": self.stage_front_track, "base_stage": self.stage_base, "back_track_stage": self.stage_back_track, "obstacle_cleared": self.obstacle_cleared, "obstacle_contact_count": self._get_obstacle_contact_count(), "joint_torque": joint_torque.copy(), "track_torque": track_torque.copy(), "q_des": q_des.copy(), "track_target_omega": track_target.copy(), "track_omega": self.track_omega.copy(), "filtered_action": self.filtered_action.copy()}
 
     def step(self, action: np.ndarray):
         if self._episode_ended:
@@ -591,27 +518,22 @@ class SnakeAvoidEnv(gym.Env):
         if raw_action.shape != (self.action_dim,) or not np.isfinite(raw_action).all():
             raise ValueError(f"action must be finite with shape ({self.action_dim},)")
         raw_action = np.clip(raw_action, -1.0, 1.0)
-
         old_filtered_action = self.filtered_action.copy()
         older_filtered_action = self.previous_filtered_action.copy()
         filter_delta = self.cfg.action_filter_alpha * (raw_action - self.filtered_action)
         max_filter_delta = self.cfg.action_rate_limit * self.policy_dt
         self.filtered_action += np.clip(filter_delta, -max_filter_delta, max_filter_delta)
-
         margin = self.cfg.joint_limit_margin
         q_des_start = np.clip(self.q_nominal + self.joint_action_scale * old_filtered_action[:4], self.joint_lower + margin, self.joint_upper - margin)
         q_des_target = np.clip(self.q_nominal + self.joint_action_scale * self.filtered_action[:4], self.joint_lower + margin, self.joint_upper - margin)
         track_target = self.cfg.track_speed_center + self.cfg.track_speed_scale * self.filtered_action[4:6]
         track_target = np.clip(track_target, -self.cfg.track_speed_limit, self.cfg.track_speed_limit)
-
         joint_torque = np.zeros(4, dtype=np.float64)
         track_torque = np.zeros(2, dtype=np.float64)
         joint_torque_sq_sum = 0.0
         track_torque_sq_sum = 0.0
         invalid_state = False
         executed_steps = 0
-        q_des = q_des_start.copy()
-
         for substep in range(self.frame_skip):
             interpolation = float(substep + 1) / self.frame_skip
             q_des = q_des_start + interpolation * (q_des_target - q_des_start)
@@ -627,14 +549,12 @@ class SnakeAvoidEnv(gym.Env):
             if not self._physics_is_finite():
                 invalid_state = True
                 break
-
         self.step_count += 1
         if invalid_state:
             self._episode_ended = True
             reward = -self.reward_cfg.invalid_physics_penalty
             info = {"termination_reason": "invalid_physics", "reward_terms": {"total": reward, "invalid_physics": 1.0}}
             return self._last_valid_obs.copy(), reward, True, False, info
-
         self._maybe_scan_lidar()
         state = self._get_robot_state()
         current_xy = state["base_pos"][:2]
@@ -642,24 +562,27 @@ class SnakeAvoidEnv(gym.Env):
         self.last_base_xy = current_xy.copy()
         current_goal_distance = float(state["goal_distance"])
         self.episode_progress += self.previous_goal_distance - current_goal_distance
-        collision, collision_names = self._get_obstacle_collision()
-        terminated, success, termination_reason = self._check_termination(state, collision)
+        stage_rewards = self._update_stage_flags()
         mean_joint_torque_sq = joint_torque_sq_sum / max(executed_steps, 1)
         mean_track_torque_sq = track_torque_sq_sum / max(executed_steps, 1)
-        reward, reward_terms = self._compute_reward(state, collision, success, mean_joint_torque_sq, mean_track_torque_sq, old_filtered_action, older_filtered_action)
-        if terminated and not success and not collision:
+        reward, reward_terms = self._compute_reward(state, stage_rewards, mean_joint_torque_sq, mean_track_torque_sq, old_filtered_action, older_filtered_action)
+        terminated, success, termination_reason = self._check_termination(state)
+        if success:
+            reward += self.reward_cfg.success_reward
+            reward_terms["success_reward"] = self.reward_cfg.success_reward
+        elif terminated:
             reward -= self.reward_cfg.termination_penalty
             reward_terms["termination_penalty"] = self.reward_cfg.termination_penalty
-            reward_terms["total"] = float(reward)
-
+        reward_terms["total"] = float(reward)
         truncated = bool(not terminated and self.step_count >= self.cfg.max_episode_steps)
         self._episode_ended = bool(terminated or truncated)
         self.older_filtered_action[:] = older_filtered_action
         self.previous_filtered_action[:] = old_filtered_action
         self.previous_goal_distance = current_goal_distance
+        self.previous_course_progress = float(state["course_progress"])
         obs = self._get_obs(state)
         self._last_valid_obs = obs.copy()
-        info = self._make_info(state, reward_terms, termination_reason, collision_names, joint_torque, track_torque, q_des_target, track_target)
+        info = self._make_info(state, reward_terms, termination_reason, joint_torque, track_torque, q_des_target, track_target)
         self.render()
         return obs, float(reward), terminated, truncated, info
 
@@ -696,3 +619,6 @@ class SnakeAvoidEnv(gym.Env):
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None
+
+
+SnakeAvoidEnv = SnakeTraverseEnv
