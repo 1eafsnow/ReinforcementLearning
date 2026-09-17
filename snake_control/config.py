@@ -13,32 +13,24 @@ SUPPORT_GEOM_NAMES = FRONT_TRACK_PAD_NAMES + BACK_TRACK_PAD_NAMES + ("base_link_
 
 @dataclass(frozen=True)
 class RewardConfig:
-    progress_weight: float = 18.0
-    heading_weight: float = 0.12
-    speed_toward_goal_weight: float = 0.25
-    clearance_weight: float = 0.30
-    clearance_distance: float = 0.65
-    avoid_turn_weight: float = 0.45
-    blocked_stall_weight: float = 0.20
-    avoid_start_distance: float = 1.25
-    avoid_full_distance: float = 0.45
-    avoid_front_fraction: float = 0.25
-    avoid_side_difference_scale: float = 0.50
-    avoid_turn_rate_scale: float = 1.00
-    avoid_heading_relaxation: float = 0.90
-    avoid_speed_relaxation: float = 0.85
-    avoid_negative_progress_relaxation: float = 0.85
-    avoid_symmetry_turn_bonus: float = 0.25
-    stall_weight: float = 0.12
-    action_rate_weight: float = 0.04
-    action_acceleration_weight: float = 0.015
-    joint_pose_weight: float = 0.015
-    joint_velocity_weight: float = 0.01
-    joint_torque_weight: float = 0.008
-    track_torque_weight: float = 0.008
-    time_penalty: float = 0.005
-    success_reward: float = 30.0
-    collision_penalty: float = 25.0
+    progress_weight: float = 16.0
+    heading_weight: float = 0.10
+    forward_speed_weight: float = 0.18
+    front_track_stage_reward: float = 2.0
+    base_stage_reward: float = 3.0
+    rear_track_stage_reward: float = 4.0
+    obstacle_clear_reward: float = 8.0
+    stall_weight: float = 0.18
+    reverse_weight: float = 1.5
+    lateral_drift_weight: float = 0.10
+    action_rate_weight: float = 0.03
+    action_acceleration_weight: float = 0.01
+    joint_pose_weight: float = 0.005
+    joint_velocity_weight: float = 0.005
+    joint_torque_weight: float = 0.005
+    track_torque_weight: float = 0.005
+    time_penalty: float = 0.003
+    success_reward: float = 25.0
     termination_penalty: float = 12.0
     invalid_physics_penalty: float = 30.0
 
@@ -47,10 +39,13 @@ class RewardConfig:
 class EnvConfig:
     xml_path: Path = PROJECT_DIR / "mjcf" / "scene_slider.xml"
     base_name: str = "base_link"
+    front_track_body_name: str = "front_track"
+    back_track_body_name: str = "back_track"
     free_joint_name: str = "floating_base"
     floor_name: str = "floor"
     lidar_site_name: str = "lidar_site"
-    obstacle_prefix: str = "obstacle"
+    obstacle_geom_name: str = "training_obstacle"
+    obstacle_hfield_name: str = "training_obstacle_hfield"
     joint_names: Tuple[str, ...] = JOINT_NAMES
     actuator_names: Tuple[str, ...] = ACTUATOR_NAMES
     front_track_pad_names: Tuple[str, ...] = FRONT_TRACK_PAD_NAMES
@@ -59,10 +54,10 @@ class EnvConfig:
     q_nominal: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0)
     kp: Tuple[float, ...] = (20.0, 20.0, 20.0, 20.0)
     kd: Tuple[float, ...] = (5.0, 5.0, 5.0, 5.0)
-    joint_action_scale: Tuple[float, ...] = (0.90, 0.90, 0.90, 0.90)
+    joint_action_scale: Tuple[float, ...] = (1.10, 1.10, 1.10, 1.10)
     joint_limit_margin: float = 0.10
     frame_skip: int = 20
-    max_episode_steps: int = 600
+    max_episode_steps: int = 750
     action_filter_alpha: float = 0.15
     action_rate_limit: float = 8.0
     track_effective_radius: float = 0.075
@@ -81,26 +76,37 @@ class EnvConfig:
     lidar_scan_hz: float = 10.0
     lidar_group: int = 0
     floor_lidar_group: int = 5
-    goal_distance_range: Tuple[float, float] = (2.5, 4.0)
-    goal_lateral_range: Tuple[float, float] = (-0.60, 0.60)
+    hfield_rows: int = 5
+    hfield_cols: int = 501
+    hfield_center_x: float = -2.5
+    hfield_center_y: float = 0.0
+    hfield_base_z: float = -10.0
+    hfield_radius_x: float = 2.5
+    hfield_radius_y: float = 2.5
+    obstacle_max_supported_height: float = 0.15
+    hfield_base_depth: float = 0.10
+    obstacle_min_height: float = 0.025
+    obstacle_height_limit: float = 0.12
+    obstacle_distance_range: Tuple[float, float] = (1.05, 1.35)
+    obstacle_ramp_length_range: Tuple[float, float] = (0.35, 0.55)
+    obstacle_platform_length_range: Tuple[float, float] = (0.25, 0.45)
+    goal_after_obstacle_range: Tuple[float, float] = (1.00, 1.35)
+    goal_lateral_range: Tuple[float, float] = (-0.08, 0.08)
     goal_radius: float = 0.30
-    obstacle_path_fraction_range: Tuple[float, float] = (0.38, 0.68)
-    obstacle_lateral_offset_range: Tuple[float, float] = (-0.40, 0.40)
-    obstacle_start_clearance: float = 1.10
-    obstacle_goal_clearance: float = 0.65
+    obstacle_clear_margin: float = 0.10
     initial_ground_clearance: float = 0.003
-    initial_yaw_noise_deg: float = 8.0
+    initial_yaw_noise_deg: float = 3.0
     joint_position_noise: float = 0.02
     joint_velocity_noise: float = 0.03
-    base_position_xy_noise: float = 0.03
+    base_position_xy_noise: float = 0.02
     base_linear_velocity_noise: float = 0.02
     base_angular_velocity_noise: float = 0.03
-    max_tilt_deg: float = 55.0
-    min_base_height: float = 0.05
-    max_base_height: float = 1.00
+    max_tilt_deg: float = 75.0
+    min_base_height: float = 0.04
+    max_base_height: float = 1.20
     world_xy_limit: float = 4.80
-    collision_force_threshold: float = 0.5
-    goal_position_scale: float = 4.0
+    max_lateral_deviation: float = 0.90
+    goal_position_scale: float = 4.5
     linear_velocity_scale: float = 1.0
     angular_velocity_scale: float = 3.0
     joint_velocity_scale: float = 8.0
@@ -141,12 +147,12 @@ class TrainConfig:
     eval_episodes: int = 8
     log_updates_every: int = 5_000
     warmup_action_limit: float = 0.50
-    obstacle_offset_curriculum: Tuple[Tuple[int, float], ...] = (
-        (0, 0.60),
-        (250_000, 0.45),
-        (600_000, 0.35),
-        (1_000_000, 0.25),
-        (1_500_000, 0.15),
+    obstacle_height_curriculum: Tuple[Tuple[int, float], ...] = (
+        (0, 0.040),
+        (250_000, 0.055),
+        (600_000, 0.075),
+        (1_000_000, 0.095),
+        (1_500_000, 0.120),
     )
 
 
